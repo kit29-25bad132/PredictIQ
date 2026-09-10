@@ -23,6 +23,11 @@ dist/
 build/
 .vite/
 
+# Firmware / PlatformIO build artifacts and downloaded lib deps
+.pio/
+.pioenvs/
+.piolibdeps/
+
 # OS / editor
 .DS_Store
 Thumbs.db
