@@ -26,6 +26,12 @@
 #define RPM_PULSE_PIN 18
 #define PULSES_PER_REVOLUTION 1UL
 
+// Simulation calibration (documented in README.md): the potentiometer emulates a
+// conditioned ACS712-style current signal, so ADC counts map linearly onto a
+// physically plausible 0..20 A range. Default pot position (2048) reads ~10.0 A.
+#define ADC_MAX_COUNTS 4095.0f
+#define CURRENT_FULL_SCALE_A 20.0f
+
 #define SENSOR_INTERVAL_MS 5000UL
 #define HEARTBEAT_INTERVAL_MS 30000UL
 #define WIFI_RECONNECT_INTERVAL_MS 10000UL

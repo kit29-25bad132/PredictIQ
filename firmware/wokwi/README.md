@@ -21,12 +21,12 @@ The simulation uses sensor components and their measured outputs only. It does n
 | Temperature | DS18B20 DQ | GPIO 4 | 4.7 kOhm pull-up from DQ to 3V3 |
 | Vibration I2C SDA | MPU6050 SDA | GPIO 8 | Actual accelerometer x/y/z values |
 | Vibration I2C SCL | MPU6050 SCL | GPIO 9 | Actual accelerometer x/y/z values |
-| Wokwi current input | Potentiometer SIG | GPIO 1 ADC | Raw ADC counts; not an ACS712 reading |
+| Wokwi current input | Potentiometer SIG | GPIO 1 ADC | ADC counts mapped to 0–20 A in `readCurrent()` (simulation calibration) |
 | RPM pulse input | Pulse generator OUT | GPIO 18 | Rising-edge interrupt, one pulse per revolution |
 | Power | All component VCC | 3V3 | Common simulation supply |
 | Ground | All component GND | GND | Common ground |
 
-The MPU6050 acceleration magnitude is sent as the measured acceleration magnitude in `m/s^2`. No vibration-velocity calibration is invented. The analog current channel sends the raw ADC value because Wokwi has no direct ACS712 component; real ACS712 voltage-to-current calibration belongs only in `readCurrent()` during physical integration.
+The MPU6050 acceleration magnitude is sent as the measured acceleration magnitude in `m/s^2`. No vibration-velocity calibration is invented. The analog current channel maps the potentiometer's 12-bit ADC counts (0–4095) linearly onto a simulated ACS712-scale range of **0–20 A** in `readCurrent()` (`ADC_MAX_COUNTS`, `CURRENT_FULL_SCALE_A` in `src/config.h`). This is a **simulation calibration, not a physical calibration claim**: Wokwi has no ACS712 component, and real ACS712 voltage-to-current calibration belongs only in `readCurrent()` during physical integration. The default pot position (2048) reads ≈10.0 A, which the API contract (0–1000 A) accepts.
 
 RPM is calculated as:
 
@@ -86,7 +86,7 @@ The firmware sends this payload shape:
   "machine_id": "M001",
   "temperature": "<DS18B20 reading>",
   "vibration": "<MPU6050 magnitude>",
-  "current": "<Wokwi ADC reading>",
+  "current": "<potentiometer position mapped to 0-20 A>",
   "rpm": "<calculated pulse RPM>",
   "timestamp": "<NTP UTC timestamp>",
   "source": "WOKWI"

@@ -48,7 +48,7 @@ void loop() {
     Serial.print("Vibration: ");
     Serial.println(vibration.valid ? String(vibration.value, 2) : "ERROR");
     Serial.print("Current: ");
-    Serial.println(current.valid ? String(current.value, 0) : "ERROR");
+    Serial.println(current.valid ? String(current.value, 2) : "ERROR");
     Serial.print("RPM: ");
     Serial.println(rpm.valid ? String(rpm.value, 2) : "ERROR");
     Serial.print("Timestamp: ");

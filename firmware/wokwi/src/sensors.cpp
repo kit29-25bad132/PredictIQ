@@ -68,10 +68,14 @@ SensorReading readVibration() {
 }
 
 SensorReading readCurrent() {
-    // This is the raw Wokwi analog representation of an ACS712 output.
-    // Real ACS712 voltage-to-amp calibration belongs in this function later.
+    // Simulation calibration (documented in README.md): the Wokwi potentiometer
+    // emulates a conditioned ACS712-style current signal. The 12-bit ADC span
+    // (0..4095 counts) maps linearly onto 0..CURRENT_FULL_SCALE_A amperes, so the
+    // value sent to the API is amperes, never raw ADC counts. Physical ACS712
+    // voltage-to-current calibration belongs only in real-hardware integration.
     const int rawValue = analogRead(CURRENT_ANALOG_PIN);
-    return {static_cast<float>(rawValue), rawValue >= 0};
+    const float amps = (static_cast<float>(rawValue) / ADC_MAX_COUNTS) * CURRENT_FULL_SCALE_A;
+    return {amps, rawValue >= 0 && isfinite(amps)};
 }
 
 SensorReading readRPM() {
