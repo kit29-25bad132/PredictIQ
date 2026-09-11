@@ -45,4 +45,16 @@
 #define HTTP_TIMEOUT_MS 8000
 #define SERIAL_BAUD 115200
 
+// TLS discipline (security plan §9.6): certificate verification is DISABLED only
+// under the explicit test build flag below, for tunnels whose certs cannot be
+// validated by the ESP32 trust store (e.g. ngrok interception). Never enable for
+// a deployment; the Phase 8 deployment uses a host with a verifiable certificate
+// (TLS_ALLOW_INSECURE undefined).
+// Enable in platformio.ini with:  -D TLS_ALLOW_INSECURE
+#ifdef TLS_ALLOW_INSECURE
+#define TLS_INSECURE_ALLOWED 1
+#else
+#define TLS_INSECURE_ALLOWED 0
+#endif
+
 #endif

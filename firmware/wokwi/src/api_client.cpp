@@ -14,9 +14,16 @@ bool sendHeartbeat() {
     }
 
     HTTPClient http;
-    // Wokwi/test-only: ngrok certificate validation is intentionally disabled.
+    // TLS discipline: certificate validation is bypassed ONLY under the explicit
+    // test build flag (TLS_ALLOW_INSECURE), for tunnels whose certificates cannot
+    // be validated by the ESP32 trust store. See config.h.
     WiFiClientSecure client;
+#if TLS_INSECURE_ALLOWED
     client.setInsecure();
+#else
+    client.setCACert(nullptr);
+    client.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);
+#endif
     const String endpoint = String(API_BASE_URL) + "/api/devices/heartbeat";
     http.begin(client, endpoint);
     http.setTimeout(HTTP_TIMEOUT_MS);
@@ -58,9 +65,16 @@ bool sendTelemetry(const SensorReading& temperature, const SensorReading& vibrat
     }
 
     HTTPClient http;
-    // Wokwi/test-only: ngrok certificate validation is intentionally disabled.
+    // TLS discipline: certificate validation is bypassed ONLY under the explicit
+    // test build flag (TLS_ALLOW_INSECURE), for tunnels whose certificates cannot
+    // be validated by the ESP32 trust store. See config.h.
     WiFiClientSecure client;
+#if TLS_INSECURE_ALLOWED
     client.setInsecure();
+#else
+    client.setCACert(nullptr);
+    client.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);
+#endif
     const String endpoint = String(API_BASE_URL) + "/api/sensor-data";
     http.begin(client, endpoint);
     http.setTimeout(HTTP_TIMEOUT_MS);

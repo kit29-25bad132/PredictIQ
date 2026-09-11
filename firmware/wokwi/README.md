@@ -66,6 +66,10 @@ The included `platformio.ini` targets the ESP32-S3 DevKitC-1. Required libraries
 
 Open `diagram.json` in Wokwi with the PlatformIO firmware built from this directory. The serial monitor uses 115200 baud.
 
+## TLS discipline
+
+Certificate validation is on by default. `client.setInsecure()` is compiled **only** when the explicit test build flag `TLS_ALLOW_INSECURE` is set (uncomment `build_flags = -D TLS_ALLOW_INSECURE` in `platformio.ini`), and only for tunnels whose certificates the ESP32 trust store cannot verify. Without the flag the client enforces certificate validation; the Phase 8 deployment must use a host with a verifiable certificate and must never enable the flag.
+
 ## Serial output
 
 Each sample prints the actual measured values, timestamp, HTTP status, and response body. A sensor error, missing NTP time, unavailable Wi-Fi, or non-2xx API response is reported and does not claim successful storage.
