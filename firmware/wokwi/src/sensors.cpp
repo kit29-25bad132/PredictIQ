@@ -19,6 +19,15 @@ unsigned long lastRpmSampleMicros = 0;
 void IRAM_ATTR onPulse() {
     ++pulseCount;
 }
+
+// Slow per-axis gravity estimates used to AC-couple the accelerometer signal.
+// Static gravity is not vibration; only the varying (AC) component is converted
+// to a vibration-velocity value. Initialized from the first sample so the first
+// telemetry POST carries a sane ~0 mm/s value instead of a gravity artifact.
+float gravX = 0.0f;
+float gravY = 0.0f;
+float gravZ = 0.0f;
+bool gravityEstimated = false;
 }
 
 void initSensors() {
@@ -59,12 +68,37 @@ SensorReading readVibration() {
     sensors_event_t temperature;
     mpu.getEvent(&acceleration, &gyro, &temperature);
 
-    const float magnitude = sqrtf(
-        acceleration.acceleration.x * acceleration.acceleration.x +
-        acceleration.acceleration.y * acceleration.acceleration.y +
-        acceleration.acceleration.z * acceleration.acceleration.z
+    const float ax = acceleration.acceleration.x;
+    const float ay = acceleration.acceleration.y;
+    const float az = acceleration.acceleration.z;
+    if (!isfinite(ax) || !isfinite(ay) || !isfinite(az)) {
+        return {0.0f, false};
+    }
+
+    if (!gravityEstimated) {
+        gravX = ax;
+        gravY = ay;
+        gravZ = az;
+        gravityEstimated = true;
+    }
+    // Slow EMA (per call at SENSOR_INTERVAL_MS) tracks gravity/orientation drift
+    // while leaving real vibration frequencies in the AC component.
+    gravX += GRAVITY_EMA_ALPHA * (ax - gravX);
+    gravY += GRAVITY_EMA_ALPHA * (ay - gravY);
+    gravZ += GRAVITY_EMA_ALPHA * (az - gravZ);
+
+    const float acMagnitude = sqrtf(
+        (ax - gravX) * (ax - gravX) +
+        (ay - gravY) * (ay - gravY) +
+        (az - gravZ) * (az - gravZ)
     );
-    return {magnitude, isfinite(magnitude)};
+
+    // Simulation calibration (documented in README.md): convert the AC
+    // acceleration magnitude to a vibration-velocity RMS-scale value using a
+    // fixed reference frequency, v[mm/s] = a[m/s^2] / (2*pi*f_ref) * 1000.
+    // This is a simulation-calibration mapping, not a physical calibration claim.
+    const float velocityMmS = (acMagnitude / (2.0f * PI * VIBRATION_REFERENCE_HZ)) * 1000.0f;
+    return {velocityMmS, isfinite(velocityMmS)};
 }
 
 SensorReading readCurrent() {

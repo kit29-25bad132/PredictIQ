@@ -32,6 +32,13 @@
 #define ADC_MAX_COUNTS 4095.0f
 #define CURRENT_FULL_SCALE_A 20.0f
 
+// Simulation calibration (documented in README.md): vibration-velocity mapping.
+// MPU6050 acceleration is AC-coupled (per-axis gravity EMA) and converted to an
+// mm/s RMS-scale value at VIBRATION_REFERENCE_HZ: v = a / (2*pi*f_ref) * 1000.
+// 159.155 Hz keeps the conversion a clean /1000: 1 m/s^2 AC -> 1 mm/s.
+#define VIBRATION_REFERENCE_HZ 159.155f
+#define GRAVITY_EMA_ALPHA 0.05f
+
 #define SENSOR_INTERVAL_MS 5000UL
 #define HEARTBEAT_INTERVAL_MS 30000UL
 #define WIFI_RECONNECT_INTERVAL_MS 10000UL
