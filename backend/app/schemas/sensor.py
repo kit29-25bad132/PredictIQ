@@ -4,6 +4,8 @@ Validates real IoT sensor telemetry, machine asset profiles, ESP32 devices,
 maintenance records, and alerts. Strictly rejects invalid, NaN, or infinite numbers.
 """
 
+from __future__ import annotations
+
 from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime
 import math
@@ -149,6 +151,15 @@ class MachineCreate(BaseModel):
     type: str = Field(..., example="Centrifugal Pump")
     location: str = Field(..., example="Bay 3 - Fluid Systems")
     status: Optional[str] = Field(default="Healthy", example="Healthy")
+    specifications: Optional["MachineSpecifications"] = None
+
+class MachineSpecifications(BaseModel):
+    rated_rpm: Optional[float] = Field(default=None, alias="ratedRPM", ge=0, le=60000)
+    rated_current: Optional[float] = Field(default=None, alias="ratedCurrent", ge=0, le=1000)
+    max_temp: Optional[float] = Field(default=None, alias="maxTemp", ge=-50, le=300)
+    max_vibration: Optional[float] = Field(default=None, alias="maxVibration", ge=0, le=100)
+
+    model_config = {"populate_by_name": True}
 
 class MachineResponse(BaseModel):
     id: Optional[int] = None
@@ -157,6 +168,7 @@ class MachineResponse(BaseModel):
     type: str
     location: str
     status: str
+    specifications: Optional[MachineSpecifications] = None
     created_at: datetime
     devices: Optional[List[DeviceResponse]] = None
     latest_reading: Optional[SensorReadingResponse] = None

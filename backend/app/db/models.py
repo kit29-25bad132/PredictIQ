@@ -6,7 +6,7 @@ maintenance records, ML predictions, and alerts.
 
 from sqlalchemy import Column, Integer, Float, String, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.app.db.database import Base
 
@@ -22,7 +22,11 @@ class Machine(Base):
     type = Column(String(100), nullable=False)
     location = Column(String(150), nullable=False)
     status = Column(String(50), default="Healthy", nullable=False)  # Healthy, Warning, Critical, Maintenance
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    rated_rpm = Column(Float, nullable=True)
+    rated_current = Column(Float, nullable=True)
+    max_temp = Column(Float, nullable=True)
+    max_vibration = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships (1 machine -> many associated records)
     devices = relationship("Device", back_populates="machine", cascade="all, delete-orphan")
@@ -43,9 +47,9 @@ class Device(Base):
     device_type = Column(String(100), default="ESP32", nullable=False)
     firmware_version = Column(String(50), default="v1.0.0", nullable=False)
     status = Column(String(50), default="OFFLINE", nullable=False)  # CONNECTED, OFFLINE
-    last_seen = Column(DateTime, nullable=True)
+    last_seen = Column(DateTime(timezone=True), nullable=True)
     source = Column(String(30), nullable=False, default="REAL_HARDWARE")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships
     machine = relationship("Machine", back_populates="devices")
@@ -60,7 +64,7 @@ class SensorReading(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     machine_id = Column(String(50), ForeignKey("machines.machine_id", ondelete="CASCADE"), index=True, nullable=False)
     device_id = Column(String(100), ForeignKey("devices.device_id", ondelete="CASCADE"), index=True, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True, nullable=False)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True, nullable=False)
     
     temperature = Column(Float, nullable=True)
     vibration = Column(Float, nullable=True)
@@ -68,7 +72,7 @@ class SensorReading(Base):
     rpm = Column(Float, nullable=True)
     source = Column(String(30), nullable=False)
     
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships
     machine = relationship("Machine", back_populates="sensor_readings")
@@ -94,9 +98,9 @@ class MaintenanceRecord(Base):
     maintenance_action = Column(Text, nullable=False)
     technician = Column(String(100), nullable=False)
     status = Column(String(50), default="Scheduled", nullable=False)  # Completed, In Progress, Scheduled
-    failure_date = Column(DateTime, nullable=True)
-    maintenance_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    failure_date = Column(DateTime(timezone=True), nullable=True)
+    maintenance_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationship
     machine = relationship("Machine", back_populates="maintenance_records")
@@ -109,7 +113,7 @@ class Prediction(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     machine_id = Column(String(50), ForeignKey("machines.machine_id", ondelete="CASCADE"), index=True, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True, nullable=False)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True, nullable=False)
     
     failure_probability = Column(Float, nullable=False)
     component = Column(String(100), nullable=False)
@@ -120,7 +124,7 @@ class Prediction(Base):
     recommended_action = Column(Text, nullable=True)
     model_version = Column(String(100), nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationship
     machine = relationship("Machine", back_populates="predictions")
@@ -141,8 +145,8 @@ class Alert(Base):
     severity = Column(String(50), default="Warning", nullable=False)  # Critical, Warning, Info
     message = Column(Text, nullable=False)
     status = Column(String(50), default="ACTIVE", nullable=False)  # ACTIVE, ACKNOWLEDGED, RESOLVED
-    created_at = Column(DateTime, default=datetime.utcnow, index=True, nullable=False)
-    resolved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True, nullable=False)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationship
     machine = relationship("Machine", back_populates="alerts")

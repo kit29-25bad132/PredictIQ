@@ -7,13 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from backend.app.core.config import get_settings
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, Device, SensorReading
 from backend.app.schemas.sensor import (
     MachineCreate,
+    MachineSpecifications,
     MachineResponse,
     DeviceCreate,
     DeviceResponse,
@@ -30,7 +31,9 @@ DEVICE_TIMEOUT_SECONDS = get_settings().device_timeout_seconds
 def compute_device_status(last_seen: Optional[datetime]) -> str:
     if not last_seen:
         return "OFFLINE"
-    return "ONLINE" if (datetime.utcnow() - last_seen).total_seconds() <= DEVICE_TIMEOUT_SECONDS else "OFFLINE"
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    return "ONLINE" if (datetime.now(timezone.utc) - last_seen).total_seconds() <= DEVICE_TIMEOUT_SECONDS else "OFFLINE"
 
 # ============================================================================
 # 1. MACHINE ASSET ENDPOINTS
@@ -75,6 +78,12 @@ def list_machines(db: Session = Depends(get_db)):
                 type=m.type,
                 location=m.location,
                 status=m.status,
+                specifications=MachineSpecifications(
+                    rated_rpm=m.rated_rpm,
+                    rated_current=m.rated_current,
+                    max_temp=m.max_temp,
+                    max_vibration=m.max_vibration,
+                ),
                 created_at=m.created_at,
                 devices=dev_responses,
                 latest_reading=SensorReadingResponse.from_orm(latest_reading) if latest_reading else None
@@ -124,6 +133,12 @@ def get_machine(machine_id: str, db: Session = Depends(get_db)):
         type=m.type,
         location=m.location,
         status=m.status,
+        specifications=MachineSpecifications(
+            rated_rpm=m.rated_rpm,
+            rated_current=m.rated_current,
+            max_temp=m.max_temp,
+            max_vibration=m.max_vibration,
+        ),
         created_at=m.created_at,
         devices=dev_responses,
         latest_reading=SensorReadingResponse.from_orm(latest_reading) if latest_reading else None
@@ -147,7 +162,11 @@ def create_machine(data: MachineCreate, db: Session = Depends(get_db)):
         type=data.type,
         location=data.location,
         status=data.status or "Healthy",
-        created_at=datetime.utcnow()
+        rated_rpm=data.specifications.rated_rpm if data.specifications else None,
+        rated_current=data.specifications.rated_current if data.specifications else None,
+        max_temp=data.specifications.max_temp if data.specifications else None,
+        max_vibration=data.specifications.max_vibration if data.specifications else None,
+        created_at=datetime.now(timezone.utc)
     )
     db.add(new_machine)
     db.commit()
@@ -160,6 +179,12 @@ def create_machine(data: MachineCreate, db: Session = Depends(get_db)):
         type=new_machine.type,
         location=new_machine.location,
         status=new_machine.status,
+        specifications=MachineSpecifications(
+            rated_rpm=new_machine.rated_rpm,
+            rated_current=new_machine.rated_current,
+            max_temp=new_machine.max_temp,
+            max_vibration=new_machine.max_vibration,
+        ),
         created_at=new_machine.created_at,
         devices=[],
         latest_reading=None
