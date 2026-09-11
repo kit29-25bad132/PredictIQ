@@ -3,13 +3,13 @@ Predict IQ - Machine Assets & Device Management API Endpoints (PostgreSQL)
 Handles industrial machine registration, ESP32 device tracking, device heartbeats, and real asset status.
 """
 
-import os
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import List, Optional
 from datetime import datetime, timedelta
 
+from backend.app.core.config import get_settings
 from backend.database.database import get_db
 from backend.database.models import Machine, Device, SensorReading
 from backend.schemas.sensor import (
@@ -25,7 +25,7 @@ from backend.schemas.sensor import (
 
 router = APIRouter(tags=["Machines & Devices (ESP32)"])
 
-DEVICE_TIMEOUT_SECONDS = int(os.getenv("DEVICE_TIMEOUT_SECONDS", "60"))
+DEVICE_TIMEOUT_SECONDS = get_settings().device_timeout_seconds
 
 def compute_device_status(last_seen: Optional[datetime]) -> str:
     if not last_seen:

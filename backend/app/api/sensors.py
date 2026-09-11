@@ -5,7 +5,6 @@ updates device connection status, and stores records in PostgreSQL.
 Strictly zero fake, synthetic, or mock data generation.
 """
 
-import os
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -13,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from datetime import datetime, timedelta
 
+from backend.app.core.config import get_settings
 from backend.database.database import get_db
 from backend.database.models import Machine, Device, SensorReading, Alert
 from backend.schemas.sensor import (
@@ -26,7 +26,7 @@ from backend.schemas.sensor import (
 router = APIRouter(tags=["Real Sensor Telemetry (ESP32)"])
 
 # Configurable device offline timeout (seconds)
-DEVICE_TIMEOUT_SECONDS = int(os.getenv("DEVICE_TIMEOUT_SECONDS", "60"))
+DEVICE_TIMEOUT_SECONDS = get_settings().device_timeout_seconds
 
 def get_device_computed_status(last_seen: Optional[datetime]) -> str:
     if not last_seen:

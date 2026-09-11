@@ -9,9 +9,10 @@ without real secrets.
 """
 
 from functools import lru_cache
-from typing import List
+from typing import Annotated, List
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -25,7 +26,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = False
-    environment: str = "development"
+    environment: str = Field(
+        default="development",
+        validation_alias=AliasChoices("APP_ENV", "ENVIRONMENT"),
+    )
 
     # PostgreSQL (connection string preferred; fallback assembly is still supported for
     # local dev only)
@@ -44,7 +48,16 @@ class Settings(BaseSettings):
     device_api_key: str = ""
 
     # CORS - deliberate origins only. Empty list means "no browser origins allowed".
-    cors_origins: List[str] = []
+    cors_origins: Annotated[List[str], NoDecode] = []
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> object:
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     # Telemetry bounds (mirrors the active backend validation contract; kept as constants
     # so they can be reused by services/health engine later).
