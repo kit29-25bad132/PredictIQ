@@ -7,19 +7,19 @@ from backend.app.core.config import get_settings
 
 settings = get_settings()
 DATABASE_URL = settings.database_url_effective
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL or complete DB_* settings are required")
+engine = None
+SessionLocal = None
+if DATABASE_URL:
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"sslmode": "require"},
+        pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_recycle=settings.db_pool_recycle,
+    )
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"sslmode": "require"},
-    pool_pre_ping=True,
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
-    pool_recycle=settings.db_pool_recycle,
-)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 def get_db():
@@ -27,6 +27,9 @@ def get_db():
     FastAPI Dependency for database sessions.
     Yields a managed SQLAlchemy database session and ensures closure.
     """
+    if SessionLocal is None:
+        raise RuntimeError("DATABASE_URL or complete DB_* settings are required")
+
     db: Session = SessionLocal()
     try:
         yield db

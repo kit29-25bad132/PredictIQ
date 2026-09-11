@@ -17,10 +17,10 @@ class SensorDataInput(BaseModel):
     device_id: str = Field(..., example="ESP32_001", min_length=1, max_length=100, description="Unique ESP32 Node ID")
     machine_id: str = Field(..., example="M001", min_length=1, max_length=50, description="Unique Machine Asset ID")
     timestamp: datetime = Field(..., description="Observation timestamp")
-    temperature: float = Field(..., example=72.4, description="Temperature in Celsius (°C)")
-    vibration: float = Field(..., example=3.8, description="Vibration velocity RMS in mm/s")
-    current: float = Field(..., example=8.7, description="Phase current in Amperes (A)")
-    rpm: float = Field(..., example=1450.0, description="Rotational speed in RPM")
+    temperature: Optional[float] = Field(default=None, example=72.4, description="Temperature in Celsius (°C)")
+    vibration: Optional[float] = Field(default=None, example=3.8, description="Vibration velocity RMS in mm/s")
+    current: Optional[float] = Field(default=None, example=8.7, description="Phase current in Amperes (A)")
+    rpm: Optional[float] = Field(default=None, example=1450.0, description="Rotational speed in RPM")
     source: Literal["WOKWI", "REAL_HARDWARE"] = Field(..., example="REAL_HARDWARE")
 
     @field_validator("temperature", "vibration", "current", "rpm")
@@ -67,10 +67,10 @@ class SensorReadingResponse(BaseModel):
     machine_id: str
     device_id: str
     timestamp: datetime
-    temperature: float
-    vibration: float
-    current: float
-    rpm: float
+    temperature: Optional[float] = None
+    vibration: Optional[float] = None
+    current: Optional[float] = None
+    rpm: Optional[float] = None
     source: str
     created_at: datetime
 

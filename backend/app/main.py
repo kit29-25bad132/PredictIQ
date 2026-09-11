@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from backend.app.core.config import get_settings
+from backend.app.api import machines, sensors
 
 settings = get_settings()
 
@@ -39,6 +40,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(sensors.router, prefix="/api")
+app.include_router(machines.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["System Health"], summary="Check backend health")

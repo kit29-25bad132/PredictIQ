@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 
-from backend.database.database import get_db
-from backend.database.models import Alert, Machine
-from backend.schemas.sensor import AlertResponse
+from backend.app.db.database import get_db
+from backend.app.db.models import Alert, Machine
+from backend.app.schemas.sensor import AlertResponse
 
 router = APIRouter(tags=["Alerts & Anomalies"])
 

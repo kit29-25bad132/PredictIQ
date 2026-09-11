@@ -13,9 +13,9 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from backend.app.core.config import get_settings
-from backend.database.database import get_db
-from backend.database.models import Machine, Device, SensorReading, Alert
-from backend.schemas.sensor import (
+from backend.app.db.database import get_db
+from backend.app.db.models import Machine, Device, SensorReading, Alert
+from backend.app.schemas.sensor import (
     SensorDataInput,
     SensorDataResponse,
     SensorReadingResponse,

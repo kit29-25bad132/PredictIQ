@@ -22,8 +22,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Add your model's MetaData object here for 'autogenerate' support
-from backend.database.database import Base, DATABASE_URL
-import backend.database.models  # Ensure models are imported
+from backend.app.db.database import Base, DATABASE_URL
+import backend.app.db.models  # Ensure models are imported
 target_metadata = Base.metadata
 
 # Reuse the verified Supabase connection configuration without duplicating credentials.

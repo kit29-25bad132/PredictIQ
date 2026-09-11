@@ -10,9 +10,9 @@ from sqlalchemy import desc
 from typing import List, Optional
 from datetime import datetime
 
-from backend.database.database import get_db
-from backend.database.models import Machine, Prediction, SensorReading, MaintenanceRecord
-from backend.schemas.sensor import (
+from backend.app.db.database import get_db
+from backend.app.db.models import Machine, Prediction, SensorReading, MaintenanceRecord
+from backend.app.schemas.sensor import (
     AIModelStatusResponse,
     PredictionResponse
 )

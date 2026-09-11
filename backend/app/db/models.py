@@ -4,20 +4,11 @@ Defines production relational schemas for machines, IoT devices, real sensor rea
 maintenance records, ML predictions, and alerts.
 """
 
-from sqlalchemy import (
-    Column,
-    Integer,
-    Float,
-    String,
-    DateTime,
-    Text,
-    ForeignKey,
-    Index
-)
+from sqlalchemy import Column, Integer, Float, String, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
-from backend.database.database import Base
+from backend.app.db.database import Base
 
 # ============================================================================
 # 1. MACHINES TABLE
@@ -71,10 +62,10 @@ class SensorReading(Base):
     device_id = Column(String(100), ForeignKey("devices.device_id", ondelete="CASCADE"), index=True, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True, nullable=False)
     
-    temperature = Column(Float, nullable=False)
-    vibration = Column(Float, nullable=False)
-    current = Column(Float, nullable=False)
-    rpm = Column(Float, nullable=False)
+    temperature = Column(Float, nullable=True)
+    vibration = Column(Float, nullable=True)
+    current = Column(Float, nullable=True)
+    rpm = Column(Float, nullable=True)
     source = Column(String(30), nullable=False)
     
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

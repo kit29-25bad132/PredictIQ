@@ -27,10 +27,6 @@ REQUIRED_FIELDS = (
     "device_id",
     "machine_id",
     "timestamp",
-    "temperature",
-    "vibration",
-    "current",
-    "rpm",
     "source",
 )
 
@@ -83,6 +79,15 @@ def test_valid_payload_is_accepted() -> None:
 def test_valid_source_values_are_accepted(source: str) -> None:
     payload = valid_payload() | {"source": source}
     assert SensorDataInput(**payload).source == source
+
+
+def test_partial_sensor_payload_is_accepted() -> None:
+    payload = valid_payload()
+    payload.pop("rpm")
+    parsed = SensorDataInput(**payload)
+
+    assert parsed.rpm is None
+    assert parsed.temperature == pytest.approx(48.2)
 
 
 @pytest.mark.parametrize("field", NUMERIC_FIELDS)
@@ -154,7 +159,7 @@ def test_out_of_bounds_values_are_rejected(field: str, value: float) -> None:
 # ============================================================================
 
 @pytest.mark.parametrize("field", NUMERIC_FIELDS)
-@pytest.mark.parametrize("value", [None, "not-a-number", [1.0], {"v": 1.0}])
+@pytest.mark.parametrize("value", ["not-a-number", [1.0], {"v": 1.0}])
 def test_non_numeric_types_are_rejected(field: str, value) -> None:
     payload = valid_payload() | {field: value}
 
