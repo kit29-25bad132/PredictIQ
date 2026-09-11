@@ -28,12 +28,18 @@ router = APIRouter(tags=["Machines & Devices (ESP32)"])
 
 DEVICE_TIMEOUT_SECONDS = get_settings().device_timeout_seconds
 
-def compute_device_status(last_seen: Optional[datetime]) -> str:
+def compute_device_status(
+    last_seen: Optional[datetime],
+    now: Optional[datetime] = None,
+) -> str:
     if not last_seen:
         return "OFFLINE"
     if last_seen.tzinfo is None:
         last_seen = last_seen.replace(tzinfo=timezone.utc)
-    return "ONLINE" if (datetime.now(timezone.utc) - last_seen).total_seconds() <= DEVICE_TIMEOUT_SECONDS else "OFFLINE"
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    return "ONLINE" if (current_time - last_seen).total_seconds() <= DEVICE_TIMEOUT_SECONDS else "OFFLINE"
 
 # ============================================================================
 # 1. MACHINE ASSET ENDPOINTS

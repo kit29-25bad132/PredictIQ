@@ -12,7 +12,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 
 # Ensure current working directory is in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 # this is the Alembic Config object
 config = context.config
