@@ -1,0 +1,96 @@
+# Predict IQ Wokwi Sensor Node
+
+This directory is a standalone Wokwi simulation for the Predict IQ telemetry path:
+
+```text
+Wokwi sensors -> ESP32-S3 -> Wi-Fi -> FastAPI /api/sensor-data -> Supabase PostgreSQL
+```
+
+The simulation uses sensor components and their measured outputs only. It does not generate random values, seed the database, contain database credentials, or implement predictions.
+
+## Board and deployment
+
+- Simulation board: `ESP32-S3 DevKitC-1`.
+- Physical deployment target: ESP32-S3 with real sensor drivers selected and calibrated for the installed hardware.
+- Wokwi values are simulation values only and must remain tagged `source: "WOKWI"`.
+
+## Wiring
+
+| Signal | Wokwi component | ESP32-S3 pin | Notes |
+| --- | --- | --- | --- |
+| Temperature | DS18B20 DQ | GPIO 4 | 4.7 kOhm pull-up from DQ to 3V3 |
+| Vibration I2C SDA | MPU6050 SDA | GPIO 8 | Actual accelerometer x/y/z values |
+| Vibration I2C SCL | MPU6050 SCL | GPIO 9 | Actual accelerometer x/y/z values |
+| Wokwi current input | Potentiometer SIG | GPIO 1 ADC | Raw ADC counts; not an ACS712 reading |
+| RPM pulse input | Pulse generator OUT | GPIO 18 | Rising-edge interrupt, one pulse per revolution |
+| Power | All component VCC | 3V3 | Common simulation supply |
+| Ground | All component GND | GND | Common ground |
+
+The MPU6050 acceleration magnitude is sent as the measured acceleration magnitude in `m/s^2`. No vibration-velocity calibration is invented. The analog current channel sends the raw ADC value because Wokwi has no direct ACS712 component; real ACS712 voltage-to-current calibration belongs only in `readCurrent()` during physical integration.
+
+RPM is calculated as:
+
+```text
+RPM = pulses_per_second * 60 / PULSES_PER_REVOLUTION
+```
+
+Change `PULSES_PER_REVOLUTION` in `src/config.h` when the simulated or physical pulse source uses a different number of pulses per revolution.
+
+## FastAPI URL and networking
+
+Wokwi cannot use `localhost` to reach a FastAPI process on the development machine. Start FastAPI on an accessible interface and expose it through a tunnel or reachable deployment, then set this value in `src/config.h`:
+
+```cpp
+#define API_BASE_URL "https://your-public-fastapi-tunnel.example.com"
+```
+
+The firmware appends `/api/sensor-data`. Do not put the Supabase URL, database username, database password, or Supabase service key in this project. FastAPI is the only database client.
+
+Wokwi Wi-Fi is configured as:
+
+```cpp
+#define WIFI_SSID "Wokwi-GUEST"
+#define WIFI_PASSWORD ""
+```
+
+## Build and libraries
+
+The included `platformio.ini` targets the ESP32-S3 DevKitC-1. Required libraries are:
+
+- OneWire by Paul Stoffregen
+- DallasTemperature by Miles Burton
+- Adafruit MPU6050
+- Adafruit Unified Sensor
+- ArduinoJson
+- ESP32 Arduino framework libraries: WiFi, HTTPClient, Wire, and time/NTP support
+
+Open `diagram.json` in Wokwi with the PlatformIO firmware built from this directory. The serial monitor uses 115200 baud.
+
+## Serial output
+
+Each sample prints the actual measured values, timestamp, HTTP status, and response body. A sensor error, missing NTP time, unavailable Wi-Fi, or non-2xx API response is reported and does not claim successful storage.
+
+The expected successful API response includes a PostgreSQL-generated `reading_id`, for example:
+
+```json
+{"success":true,"message":"Sensor data stored successfully","reading_id":123}
+```
+
+## API payload
+
+The firmware sends this payload shape:
+
+```json
+{
+  "device_id": "ESP32_001",
+  "machine_id": "M001",
+  "temperature": "<DS18B20 reading>",
+  "vibration": "<MPU6050 magnitude>",
+  "current": "<Wokwi ADC reading>",
+  "rpm": "<calculated pulse RPM>",
+  "timestamp": "<NTP UTC timestamp>",
+  "source": "WOKWI"
+}
+```
+
+Runtime values come from the Wokwi components and are not hardcoded by the firmware.
