@@ -14,7 +14,8 @@ import {
   DataCollectionStatus,
   AIModelStatus,
   SensorInputPayload,
-  MaintenanceInputPayload
+  MaintenanceInputPayload,
+  MachineInputPayload
 } from '../types';
 
 class PredictIQApiService {
@@ -161,7 +162,7 @@ class PredictIQApiService {
     return this.fetchJson<Machine>(`/machines/${encodeURIComponent(machineId)}`);
   }
 
-  public async registerMachine(data: Partial<Machine>): Promise<Machine> {
+  public async registerMachine(data: MachineInputPayload): Promise<Machine> {
     return this.fetchJson<Machine>('/machines', {
       method: 'POST',
       body: JSON.stringify(data),

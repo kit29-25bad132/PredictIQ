@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MachineType } from '../types';
+import { MachineInputPayload, MachineType } from '../types';
 import api from '../services/api';
 import { X, Plus, Cpu } from 'lucide-react';
 
@@ -22,7 +22,6 @@ export const AddMachineModal: React.FC<AddMachineModalProps> = ({
   const [ratedCurrent, setRatedCurrent] = useState(10.0);
   const [maxTemp, setMaxTemp] = useState(75.0);
   const [maxVibration, setMaxVibration] = useState(4.5);
-  const [bearingType, setBearingType] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -38,7 +37,7 @@ export const AddMachineModal: React.FC<AddMachineModalProps> = ({
     setErrorMsg(null);
 
     try {
-      await api.registerMachine({
+      const payload: MachineInputPayload = {
         machine_id: machineId.trim().toUpperCase(),
         name: name.trim(),
         type,
@@ -47,12 +46,10 @@ export const AddMachineModal: React.FC<AddMachineModalProps> = ({
           ratedRPM: Number(ratedRpm),
           ratedCurrent: Number(ratedCurrent),
           maxTemp: Number(maxTemp),
-          criticalTemp: Number(maxTemp) + 12,
           maxVibration: Number(maxVibration),
-          criticalVibration: Number(maxVibration) + 2,
-          bearingType: bearingType.trim() || 'Deep Groove Ball Bearing',
         },
-      } as any);
+      };
+      await api.registerMachine(payload);
 
       onMachineAdded();
       onClose();
@@ -202,20 +199,6 @@ export const AddMachineModal: React.FC<AddMachineModalProps> = ({
                 className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white"
               />
             </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-slate-300">
-              Bearing Specification (Optional)
-            </label>
-            <input
-              id="input-new-machine-bearing"
-              type="text"
-              placeholder="e.g. SKF Explorer 6310-2RS1/C3"
-              value={bearingType}
-              onChange={(e) => setBearingType(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
-            />
           </div>
 
           {errorMsg && (

@@ -10,6 +10,13 @@ export type MachineType =
 
 export type DataSource = 'WOKWI' | 'REAL_HARDWARE';
 
+export interface MachineSpecifications {
+  ratedRPM?: number | null;
+  ratedCurrent?: number | null;
+  maxTemp?: number | null;
+  maxVibration?: number | null;
+}
+
 export interface Device {
   id?: number;
   device_id: string;
@@ -29,6 +36,7 @@ export interface Machine {
   type: MachineType | string;
   location: string;
   status: MachineStatus;
+  specifications?: MachineSpecifications | null;
   created_at: string;
   devices?: Device[];
   latest_reading?: SensorReading;
@@ -136,6 +144,14 @@ export interface SensorInputPayload {
   current: number;
   rpm: number;
   source?: DataSource;
+}
+
+export interface MachineInputPayload {
+  machine_id: string;
+  name: string;
+  type: MachineType | string;
+  location: string;
+  specifications: MachineSpecifications;
 }
 
 export interface MaintenanceInputPayload {
