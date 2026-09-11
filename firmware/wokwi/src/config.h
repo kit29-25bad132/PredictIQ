@@ -8,7 +8,7 @@
 #define WIFI_PASSWORD ""
 
 // Replace with a publicly reachable FastAPI URL or tunnel URL. Do not use localhost.
-#define API_BASE_URL "https://gents-suburb-scorch.ngrok-free.dev"
+#define API_BASE_URL "https://profession-thorough-rear-firewall.trycloudflare.com"
 
 #define DEVICE_ID "ESP32_001"
 #define MACHINE_ID "M001"

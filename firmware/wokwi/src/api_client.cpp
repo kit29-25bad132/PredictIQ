@@ -2,10 +2,44 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 
 #include "config.h"
 #include "wifi_manager.h"
+
+namespace {
+
+// Transport selection follows the configured URL scheme so the documented dev
+// fallback (plain HTTP through a tunnel or the Wokwi gateway, plan §8 step 5 /
+// R1) works without weakening HTTPS: HTTPS keeps the TLS discipline below
+// (certificate verification ON unless the TLS_ALLOW_INSECURE test build flag is
+// set); HTTP uses a plain client and no TLS flag applies.
+struct HttpTransport {
+    WiFiClient plain;
+    WiFiClientSecure secure;
+    bool tls = false;
+};
+
+bool beginRequest(HTTPClient& http, HttpTransport& transport, const String& endpoint) {
+    transport.tls = endpoint.startsWith("https://");
+    if (transport.tls) {
+        // TLS discipline: certificate validation is bypassed ONLY under the
+        // explicit test build flag (TLS_ALLOW_INSECURE), for tunnels whose
+        // certificates cannot be validated by the ESP32 trust store. See config.h.
+        if (TLS_INSECURE_ALLOWED) {
+            transport.secure.setInsecure();
+        } else {
+            transport.secure.setCACert(nullptr);
+            transport.secure.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);
+        }
+        return http.begin(transport.secure, endpoint);
+    }
+    return http.begin(transport.plain, endpoint);
+}
+
+}  // namespace
 
 bool sendHeartbeat() {
     if (!isWiFiConnected()) {
@@ -14,18 +48,11 @@ bool sendHeartbeat() {
     }
 
     HTTPClient http;
-    // TLS discipline: certificate validation is bypassed ONLY under the explicit
-    // test build flag (TLS_ALLOW_INSECURE), for tunnels whose certificates cannot
-    // be validated by the ESP32 trust store. See config.h.
-    WiFiClientSecure client;
-#if TLS_INSECURE_ALLOWED
-    client.setInsecure();
-#else
-    client.setCACert(nullptr);
-    client.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);
-#endif
-    const String endpoint = String(API_BASE_URL) + "/api/devices/heartbeat";
-    http.begin(client, endpoint);
+    HttpTransport transport;
+    if (!beginRequest(http, transport, String(API_BASE_URL) + "/api/devices/heartbeat")) {
+        Serial.println("API connection failed");
+        return false;
+    }
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
 
@@ -65,18 +92,11 @@ bool sendTelemetry(const SensorReading& temperature, const SensorReading& vibrat
     }
 
     HTTPClient http;
-    // TLS discipline: certificate validation is bypassed ONLY under the explicit
-    // test build flag (TLS_ALLOW_INSECURE), for tunnels whose certificates cannot
-    // be validated by the ESP32 trust store. See config.h.
-    WiFiClientSecure client;
-#if TLS_INSECURE_ALLOWED
-    client.setInsecure();
-#else
-    client.setCACert(nullptr);
-    client.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);
-#endif
-    const String endpoint = String(API_BASE_URL) + "/api/sensor-data";
-    http.begin(client, endpoint);
+    HttpTransport transport;
+    if (!beginRequest(http, transport, String(API_BASE_URL) + "/api/sensor-data")) {
+        Serial.println("[HTTP] Failed to open connection to API.");
+        return false;
+    }
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
 
