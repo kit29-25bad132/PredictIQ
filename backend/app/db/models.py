@@ -4,7 +4,7 @@ Defines production relational schemas for machines, IoT devices, real sensor rea
 maintenance records, ML predictions, and alerts.
 """
 
-from sqlalchemy import Column, Integer, Float, String, DateTime, Text, ForeignKey, Index
+from sqlalchemy import CheckConstraint, Column, Integer, Float, String, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -34,6 +34,12 @@ class Machine(Base):
     maintenance_records = relationship("MaintenanceRecord", back_populates="machine", cascade="all, delete-orphan")
     predictions = relationship("Prediction", back_populates="machine", cascade="all, delete-orphan")
     alerts = relationship("Alert", back_populates="machine", cascade="all, delete-orphan")
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('Healthy', 'Warning', 'Critical', 'Maintenance')",
+            name="ck_machines_status",
+        ),
+    )
 
 # ============================================================================
 # 2. DEVICES TABLE (ESP32 IoT Nodes)
@@ -54,6 +60,10 @@ class Device(Base):
     # Relationships
     machine = relationship("Machine", back_populates="devices")
     sensor_readings = relationship("SensorReading", back_populates="device", cascade="all, delete-orphan")
+    __table_args__ = (
+        CheckConstraint("status IN ('ONLINE', 'OFFLINE')", name="ck_devices_status"),
+        CheckConstraint("source IN ('WOKWI', 'REAL_HARDWARE')", name="ck_devices_source"),
+    )
 
 # ============================================================================
 # 3. SENSOR READINGS TABLE (Real IoT Telemetry)
@@ -82,6 +92,7 @@ class SensorReading(Base):
     __table_args__ = (
         Index("ix_sensor_readings_machine_timestamp", "machine_id", "timestamp"),
         Index("ix_sensor_readings_device_timestamp", "device_id", "timestamp"),
+        CheckConstraint("source IN ('WOKWI', 'REAL_HARDWARE')", name="ck_sensor_readings_source"),
     )
 
 # ============================================================================
@@ -104,6 +115,12 @@ class MaintenanceRecord(Base):
 
     # Relationship
     machine = relationship("Machine", back_populates="maintenance_records")
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('Completed', 'In Progress', 'Scheduled')",
+            name="ck_maintenance_records_status",
+        ),
+    )
 
 # ============================================================================
 # 5. PREDICTIONS TABLE (Verified AI Model Inference)
@@ -153,4 +170,6 @@ class Alert(Base):
 
     __table_args__ = (
         Index("ix_alerts_machine_created", "machine_id", "created_at"),
+        CheckConstraint("severity IN ('Critical', 'Warning', 'Info')", name="ck_alerts_severity"),
+        CheckConstraint("status IN ('ACTIVE', 'ACKNOWLEDGED', 'RESOLVED')", name="ck_alerts_status"),
     )
