@@ -24,13 +24,11 @@
 #define DEVICE_ID                 "ESP32_001"
 #define MACHINE_ID                "M001"
 #define DEVICE_TYPE               "ESP32"
-#define SENSOR_SOURCE             "WOKWI"
+#define SENSOR_SOURCE             "REAL_HARDWARE"
 #define NTP_SERVER                "pool.ntp.org"
 #define UTC_OFFSET_SECONDS        0L
 #define DAYLIGHT_OFFSET_SECONDS   0L
 
-// Security Token / API Key Placeholder (for device-level authentication)
-#define DEVICE_API_KEY            "YOUR_SECURE_DEVICE_API_KEY_HERE"
 
 // Timing & Transmission Intervals (Milliseconds)
 // Change these intervals freely without altering core logic

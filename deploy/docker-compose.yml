@@ -1,0 +1,29 @@
+# PredictIQ Deployment Skeleton (Phase 7)
+#
+# Status: configuration verified locally; deployment verification PENDING.
+# Secrets: all injected via .env (gitignored) or runtime environment.
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      VITE_API_URL: "${VITE_API_URL:-http://localhost:8000}"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    image: python:3.12-slim
+    command: ["echo", "backend placeholder — replace with the real FastAPI image"]
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
+      BACKEND_HOST: "${BACKEND_HOST:-0.0.0.0}"
+      BACKEND_PORT: "${BACKEND_PORT:-8000}"
+    restart: unless-stopped
+    # TODO(deploy): replace placeholder with real FastAPI build, migrations,
+    # healthcheck, and readiness probe. Do NOT put real credentials here.

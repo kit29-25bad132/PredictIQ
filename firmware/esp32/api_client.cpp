@@ -28,7 +28,6 @@ bool sendHeartbeat(const TelemetrySnapshot& snapshot) {
     http.begin(endpoint);
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
 
     // Build JSON Heartbeat Payload
     StaticJsonDocument<384> doc;
@@ -97,7 +96,6 @@ bool sendSensorTelemetry(const TelemetrySnapshot& snapshot) {
     http.begin(endpoint);
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
 
     // Build JSON Telemetry Payload with ONLY genuine numeric readings
     StaticJsonDocument<384> doc;
