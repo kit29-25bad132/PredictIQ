@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Machine, Prediction, ContributingFactor, FeedbackContext } from '../types';
+import { Machine, Prediction, ContributingFactor, FeedbackContext, ModelEvaluation, ModelStatus } from '../types';
 import ShapAttributionBar from '../components/ShapAttributionBar';
 import api from '../services/api';
 import {
@@ -39,6 +39,8 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
     machines.length > 0 ? machines[0].machine_id : 'M001'
   );
   const [activePrediction, setActivePrediction] = useState<Prediction | null>(null);
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
+  const [modelEvaluation, setModelEvaluation] = useState<ModelEvaluation | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitFeedback, setSubmitFeedback] = useState<string | null>(null);
@@ -54,8 +56,14 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
   const fetchStatusAndPrediction = async (id: string) => {
     setIsLoading(true);
     try {
-      const predRes = await api.getPrediction(id).catch(() => null);
+      const [predRes, statusRes, evalRes] = await Promise.all([
+        api.getPrediction(id).catch(() => null),
+        api.getModelStatus().catch(() => null),
+        api.getModelEvaluation().catch(() => null),
+      ]);
       setActivePrediction(predRes);
+      setModelStatus(statusRes);
+      setModelEvaluation(evalRes);
     } catch (err) {
       console.warn('Failed to fetch prediction state:', err);
     } finally {
@@ -272,6 +280,37 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
                   ? `${activePrediction.model_version}${activePrediction.is_prototype ? ' (prototype)' : ''}`
                   : 'Prototype physics engine'}
               </span>
+            </div>
+
+            {/* Honest ML source banner: prototype vs trained/evaluated vs insufficient */}
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs">
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-cyan-400" />
+                <span className="font-bold uppercase tracking-wider text-slate-300">
+                  Model source: {modelStatus ? (modelStatus.source === 'trained' ? 'Trained + evaluated' : modelStatus.source === 'trained-unevaluated' ? 'Trained (evaluation incomplete)' : 'Prototype') : 'Prototype'}
+                </span>
+              </div>
+              <p className="mt-1 leading-relaxed text-slate-400">
+                {modelStatus?.message || 'Deterministic prototype estimates are active; validated ML waits for curated ground truth.'}
+              </p>
+              {modelEvaluation && (
+                <p className="mt-1 font-mono text-[11px] text-slate-500">
+                  Ground truth: {modelEvaluation.ground_truth_count} record(s) • linked verdicts: {modelEvaluation.evaluated_count} • curated labels: {modelEvaluation.labeled_count} (faults {modelEvaluation.positive_count}, non-faults {modelEvaluation.negative_count})
+                </p>
+              )}
+              {modelEvaluation && !modelEvaluation.evaluated && (
+                <p className="mt-1 text-[11px] text-amber-300">
+                  Insufficient evaluation data — prototype accuracy is unavailable, not zero. Record technician prediction-vs-reality feedback to enable evaluation.
+                </p>
+              )}
+              {modelStatus?.metrics && (
+                <div className="mt-2 grid grid-cols-2 gap-2 font-mono text-[11px] text-slate-300 sm:grid-cols-4">
+                  <span>Accuracy: {modelStatus.metrics.accuracy ?? '—'}</span>
+                  <span>Precision: {modelStatus.metrics.precision ?? '—'}</span>
+                  <span>Recall: {modelStatus.metrics.recall ?? '—'}</span>
+                  <span>F1: {modelStatus.metrics.f1 ?? '—'}</span>
+                </div>
+              )}
             </div>
 
             {/* Real Prediction Output — rendered only when persisted prediction exists */}

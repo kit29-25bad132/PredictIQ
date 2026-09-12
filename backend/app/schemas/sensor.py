@@ -370,6 +370,87 @@ class FeedbackListEntry(BaseModel):
         from_attributes = True
 
 # ============================================================================
+# 6c. MODEL EVALUATION / GOVERNED ML STATUS SCHEMAS (Phase 6)
+# ============================================================================
+
+class ModelMetricsResponse(BaseModel):
+    accuracy: Optional[float] = None
+    precision: Optional[float] = None
+    recall: Optional[float] = None
+    f1: Optional[float] = None
+    confusion_matrix: Optional[Dict[str, Any]] = None
+    support: Optional[int] = None
+
+
+class ModelStatusResponse(BaseModel):
+    source: str = Field(default="prototype")
+    trained: bool = Field(default=False)
+    evaluated: bool = Field(default=False)
+    model_version: Optional[str] = Field(default="physics-rule-v1")
+    status: str = Field(default="Prototype physics engine active")
+    message: str = Field(default="")
+    dataset_version: Optional[str] = None
+    features: Optional[List[str]] = None
+    metrics: Optional[ModelMetricsResponse] = None
+    eval_date: Optional[datetime] = None
+    deployment_status: Optional[str] = None
+    dataset_size: Optional[int] = None
+    evaluation_dataset_size: Optional[int] = None
+
+    @field_validator("metrics", mode="before")
+    @classmethod
+    def validate_metrics(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            for key in ("accuracy", "precision", "recall", "f1"):
+                number = value.get(key)
+                if number is not None and (not isinstance(number, (int, float)) or math.isnan(float(number)) or math.isinf(float(number))):
+                    raise ValueError(f"Evaluation metric '{key}' must be finite, got {number!r}")
+        return value
+
+
+class ModelTrainRequest(BaseModel):
+    dataset_version: str = Field(default="feedback-v1", min_length=1, max_length=100)
+    test_size: float = Field(default=0.25, ge=0.1, le=0.5)
+    random_state: int = Field(default=42)
+
+
+class ModelTrainResponse(BaseModel):
+    success: bool
+    refusal: Optional[str] = None
+    message: str
+    model_version: Optional[str] = None
+    dataset_version: Optional[str] = None
+    metrics: Optional[ModelMetricsResponse] = None
+    dataset_size: Optional[int] = None
+    train_dataset_size: Optional[int] = None
+    evaluation_dataset_size: Optional[int] = None
+    labeled_count: Optional[int] = None
+    positive_count: Optional[int] = None
+    negative_count: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ModelEvaluationResponse(BaseModel):
+    evaluated: bool
+    reason: Optional[str] = None
+    message: str
+    ground_truth_count: int = 0
+    evaluated_count: int = 0
+    correct_count: int = 0
+    incorrect_count: int = 0
+    prototype_accuracy: Optional[float] = None
+    labeled_count: int = 0
+    positive_count: int = 0
+    negative_count: int = 0
+    excluded_ambiguous_label: int = 0
+    excluded_non_finite: int = 0
+    excluded_unknown_outcome: int = 0
+    model_status: ModelStatusResponse
+
+
+# ============================================================================
 # 7. DATA COLLECTION STATUS & FLEET STATS SCHEMAS
 # ============================================================================
 

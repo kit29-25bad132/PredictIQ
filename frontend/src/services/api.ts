@@ -13,6 +13,8 @@ import {
   FleetStats,
   DataCollectionStatus,
   AIModelStatus,
+  ModelEvaluation,
+  ModelStatus,
   SensorInputPayload,
   MaintenanceInputPayload,
   MachineInputPayload,
@@ -140,7 +142,15 @@ class PredictIQApiService {
 
   public async getAIModelStatus(): Promise<AIModelStatus> {
     try {
-      return await this.fetchJson<AIModelStatus>('/model-status');
+      const status = await this.fetchJson<ModelStatus>('/model-status');
+      return {
+        status: status.status,
+        prediction: status.trained ? 'Available (governed model)' : 'Prototype only',
+        remaining_useful_life: 'Not available',
+        confidence: 'Not available',
+        trained_model_exists: status.trained === true,
+        message: status.message,
+      };
     } catch (err) {
       return {
         status: 'Waiting for real historical data',
@@ -151,6 +161,14 @@ class PredictIQApiService {
         message: 'Awaiting real historical sensor data collection in PostgreSQL.'
       };
     }
+  }
+
+  public async getModelStatus(): Promise<ModelStatus> {
+    return this.fetchJson<ModelStatus>('/model-status');
+  }
+
+  public async getModelEvaluation(): Promise<ModelEvaluation> {
+    return this.fetchJson<ModelEvaluation>('/model-evaluation');
   }
 
   // =========================================================================

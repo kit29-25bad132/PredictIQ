@@ -1,8 +1,9 @@
-"""Service boundary for deterministic Phase 3 predictions."""
+"""Service boundary for deterministic Phase 3 predictions + Phase 6 registry."""
 
 from typing import Any, Dict
 
 from ml.prediction import predict_machine_health
+from ml.train import get_registry_status
 
 
 class PredictionService:
@@ -34,12 +35,8 @@ class PredictionService:
 
     @staticmethod
     def get_status() -> Dict[str, Any]:
-        return {
-            "trained": False,
-            "status": "Prototype physics engine active",
-            "model_version": "physics-rule-v1",
-            "message": "Deterministic prototype estimates are active; validated ML is deferred to Phase 6.",
-        }
+        """Honest registry status: trained only when a real artifact loads."""
+        return get_registry_status()
 
 
 prediction_service = PredictionService()

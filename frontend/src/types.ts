@@ -137,6 +137,49 @@ export interface AIModelStatus {
   message: string;
 }
 
+export interface ModelMetrics {
+  accuracy?: number | null;
+  precision?: number | null;
+  recall?: number | null;
+  f1?: number | null;
+  confusion_matrix?: { labels: number[]; matrix: number[][] } | null;
+  support?: number | null;
+}
+
+export interface ModelStatus {
+  source: 'prototype' | 'trained' | 'trained-unevaluated' | string;
+  trained: boolean;
+  evaluated: boolean;
+  model_version?: string | null;
+  status: string;
+  message: string;
+  dataset_version?: string | null;
+  features?: string[] | null;
+  metrics?: ModelMetrics | null;
+  eval_date?: string | null;
+  deployment_status?: string | null;
+  dataset_size?: number | null;
+  evaluation_dataset_size?: number | null;
+}
+
+export interface ModelEvaluation {
+  evaluated: boolean;
+  reason?: string | null;
+  message: string;
+  ground_truth_count: number;
+  evaluated_count: number;
+  correct_count: number;
+  incorrect_count: number;
+  prototype_accuracy?: number | null;
+  labeled_count: number;
+  positive_count: number;
+  negative_count: number;
+  excluded_ambiguous_label: number;
+  excluded_non_finite: number;
+  excluded_unknown_outcome: number;
+  model_status: ModelStatus;
+}
+
 export interface SensorInputPayload {
   device_id: string;
   machine_id: string;

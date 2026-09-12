@@ -10,8 +10,17 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, Prediction
-from backend.app.schemas.sensor import AIModelStatusResponse, PredictionInput, PredictionResponse
+from backend.app.schemas.sensor import (
+    ModelEvaluationResponse,
+    ModelStatusResponse,
+    ModelTrainRequest,
+    ModelTrainResponse,
+    PredictionInput,
+    PredictionResponse,
+)
+from backend.app.services.model_evaluation import build_evaluation
 from backend.app.services.prediction_service import prediction_service
+from ml.train import train_governed_model
 
 router = APIRouter(tags=["Predictions & Explanations"])
 
@@ -46,16 +55,60 @@ def insufficient_data(machine_id: str) -> PredictionResponse:
     )
 
 
-@router.get("/model-status", response_model=AIModelStatusResponse)
-def get_ai_model_status() -> AIModelStatusResponse:
+@router.get("/model-status", response_model=ModelStatusResponse)
+def get_ai_model_status() -> ModelStatusResponse:
     model_status = prediction_service.get_status()
-    return AIModelStatusResponse(
-        status=model_status["status"],
-        prediction="Available",
-        remaining_useful_life="Not available",
-        confidence="Not available",
-        trained_model_exists=model_status["trained"],
-        message=model_status["message"],
+    return ModelStatusResponse(**model_status)
+
+
+@router.get("/model-evaluation", response_model=ModelEvaluationResponse)
+def get_model_evaluation(db: Session = Depends(get_db)) -> ModelEvaluationResponse:
+    """Honest prototype-vs-reality evaluation from stored ground truth."""
+    report = build_evaluation(db)
+    payload = dict(report)
+    payload.pop("samples", None)
+    return ModelEvaluationResponse(**payload)
+
+
+@router.post("/train-model", response_model=ModelTrainResponse)
+def train_governed_ml_model(payload: ModelTrainRequest, db: Session = Depends(get_db)) -> ModelTrainResponse:
+    """Explicit, governed training on curated technician labels only (ADR-005).
+
+    Feedback ingestion never calls this: training happens only here, and only
+    when enough two-class ground truth exists. Returns HTTP 200 with
+    ``success=false`` on honest refusals so clients can display the reason.
+    """
+    report = build_evaluation(db)
+    result = train_governed_model(
+        report["samples"],
+        dataset_version=payload.dataset_version,
+        test_size=payload.test_size,
+        random_state=payload.random_state,
+    )
+    if not result.get("success"):
+        return ModelTrainResponse(
+            success=False,
+            refusal=result.get("refusal"),
+            message=result.get("message", "Training refused."),
+            dataset_version=payload.dataset_version,
+            dataset_size=result.get("labeled_count", report["labeled_count"]),
+            labeled_count=result.get("labeled_count", report["labeled_count"]),
+            positive_count=result.get("positive_count", report["positive_count"]),
+            negative_count=result.get("negative_count", report["negative_count"]),
+        )
+    return ModelTrainResponse(
+        success=True,
+        message=f"Governed model {result['model_version']} trained on curated ground truth.",
+        model_version=result.get("model_version"),
+        dataset_version=result.get("dataset_version"),
+        metrics=result.get("metrics"),
+        dataset_size=result.get("dataset_size"),
+        train_dataset_size=result.get("train_dataset_size"),
+        evaluation_dataset_size=result.get("evaluation_dataset_size"),
+        labeled_count=result.get("dataset_size"),
+        positive_count=result.get("metadata", {}).get("label_positive"),
+        negative_count=result.get("metadata", {}).get("label_negative"),
+        metadata=result.get("metadata"),
     )
 
 
