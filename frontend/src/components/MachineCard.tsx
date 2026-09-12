@@ -13,7 +13,7 @@ export const MachineCard: React.FC<MachineCardProps> = ({
   onSelect,
   onOpenManualInput,
 }) => {
-  const reading = machine.current_reading || machine.latest_reading;
+  const reading = machine.latest_reading;
   const hasReading = reading !== undefined && reading !== null;
 
   const temp = hasReading ? reading.temperature.toFixed(1) : '--';
@@ -142,27 +142,21 @@ export const MachineCard: React.FC<MachineCardProps> = ({
           </div>
         </div>
 
-        {/* Real AI Model Status Section */}
+        {/* Telemetry Source & Health Info */}
         <div className="mt-4 space-y-2 border-t border-slate-800/80 pt-3">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-400 font-medium">AI Failure Risk:</span>
-            <span className="font-mono font-medium text-amber-400/90 text-[11px]">
-              NOT AVAILABLE
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-xs pt-1">
             <span className="text-slate-400 font-medium">Source:</span>
             <span className="font-mono text-[11px] text-cyan-400">
-              {reading?.source === 'WOKWI' ? 'WOKWI SIMULATION' : reading?.source || 'UNKNOWN'}
+              {reading?.source === 'WOKWI' ? 'WOKWI SIMULATION' : reading?.source || 'NO READINGS'}
             </span>
           </div>
 
           <div className="flex items-center justify-between text-xs pt-1 text-slate-400">
             <span className="flex items-center gap-1 font-medium">
-              <Clock className="h-3.5 w-3.5 text-cyan-400" /> Remaining Life:
+              <Clock className="h-3.5 w-3.5 text-cyan-400" /> Last Reading:
             </span>
             <span className="font-mono text-xs font-semibold text-slate-300">
-              Not available
+              {reading ? new Date(reading.timestamp).toLocaleTimeString() : 'No data yet'}
             </span>
           </div>
           {reading?.source === 'WOKWI' && (

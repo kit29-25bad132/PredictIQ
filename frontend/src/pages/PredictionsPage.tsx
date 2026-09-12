@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Machine, Prediction, AIModelStatus } from '../types';
+import { Machine, Prediction, ContributingFactor } from '../types';
+import ShapAttributionBar from '../components/ShapAttributionBar';
 import api from '../services/api';
 import {
   BrainCircuit,
@@ -34,7 +35,6 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
   const [selectedMachineId, setSelectedMachineId] = useState<string>(
     machines.length > 0 ? machines[0].machine_id : 'M001'
   );
-  const [aiStatus, setAiStatus] = useState<AIModelStatus | null>(null);
   const [activePrediction, setActivePrediction] = useState<Prediction | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -51,11 +51,7 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
   const fetchStatusAndPrediction = async (id: string) => {
     setIsLoading(true);
     try {
-      const [statusRes, predRes] = await Promise.all([
-        api.getAIModelStatus(),
-        api.getPrediction(id).catch(() => null),
-      ]);
-      setAiStatus(statusRes);
+      const predRes = await api.getPrediction(id).catch(() => null);
       setActivePrediction(predRes);
     } catch (err) {
       console.warn('Failed to fetch prediction state:', err);
@@ -269,76 +265,101 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
               </div>
 
               <span className="rounded bg-amber-500/20 px-2.5 py-1 font-mono text-xs font-bold text-amber-300 border border-amber-500/30">
-                {aiStatus?.status || 'Waiting for real historical data'}
+                {activePrediction?.model_version
+                  ? `${activePrediction.model_version}${activePrediction.is_prototype ? ' (prototype)' : ''}`
+                  : 'Prototype physics engine'}
               </span>
             </div>
 
-            {/* 4 Transparent Status Cards */}
-            <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="text-[11px] font-medium text-slate-400">Failure Risk</div>
-                <div className="font-mono text-lg font-bold text-slate-300 mt-2">
-                  Not available
-                </div>
-                <div className="text-[10px] text-slate-500 mt-1">Awaiting real data</div>
-              </div>
+            {/* Real Prediction Output — rendered only when persisted prediction exists */}
+            {activePrediction && activePrediction.prediction_available ? (
+              <>
+                <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                    <div className="text-[11px] font-medium text-slate-400">Failure Probability</div>
+                    <div className="font-mono text-lg font-bold text-slate-300 mt-2">
+                      {activePrediction.failure_probability != null
+                        ? `${(activePrediction.failure_probability * 100).toFixed(1)}%`
+                        : '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-1">Physics-prototype estimate</div>
+                  </div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="text-[11px] font-medium text-slate-400">Component Diagnostic</div>
-                <div className="font-mono text-lg font-bold text-slate-300 mt-2">
-                  Not available
-                </div>
-                <div className="text-[10px] text-slate-500 mt-1">Requires trained model</div>
-              </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                    <div className="text-[11px] font-medium text-slate-400">Component Diagnostic</div>
+                    <div className="font-mono text-lg font-bold text-slate-300 mt-2">
+                      {activePrediction.component || '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-1">Highest-risk subsystem</div>
+                  </div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="text-[11px] font-medium text-slate-400">Remaining Life (RUL)</div>
-                <div className="font-mono text-lg font-bold text-slate-300 mt-2">
-                  Not available
-                </div>
-                <div className="text-[10px] text-slate-500 mt-1">Empirical degradation</div>
-              </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                    <div className="text-[11px] font-medium text-slate-400">Model Version</div>
+                    <div className="font-mono text-lg font-bold text-slate-300 mt-2">
+                      {activePrediction.model_version || '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-1">
+                      {activePrediction.is_prototype ? 'Prototype engine' : 'Validated ML'}
+                    </div>
+                  </div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="text-[11px] font-medium text-slate-400">Model Confidence</div>
-                <div className="font-mono text-lg font-bold text-slate-300 mt-2">
-                  Not available
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                    <div className="text-[11px] font-medium text-slate-400">Recommended Action</div>
+                    <div className="font-mono text-lg font-bold text-slate-300 mt-2">
+                      {activePrediction.recommended_action || '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-1">Engine output</div>
+                  </div>
                 </div>
-                <div className="text-[10px] text-slate-500 mt-1">Validation metric</div>
-              </div>
-            </div>
 
-            {/* Real Data & Training Notice */}
-            <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5 space-y-3">
-              <div className="flex items-start gap-2.5">
-                <Info className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-400">
-                    Real-Data-First ML Training Policy
-                  </h4>
-                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                    {aiStatus?.message || 
-                      "Predict IQ does not generate synthetic failure probabilities. Failure prediction, SHAP feature attributions, and Remaining Useful Life (RUL) will be computed once real historical sensor telemetry and ground-truth maintenance logs are collected in PostgreSQL."
-                    }
-                  </p>
-                </div>
-              </div>
+                {(activePrediction.contributing_factors && activePrediction.contributing_factors.length > 0) && (
+                  <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Sparkles className="h-4 w-4 text-purple-400" />
+                      <h4 className="text-sm font-bold text-white">Explanation — Contributing Factors (XAI)</h4>
+                    </div>
+                    <ShapAttributionBar factors={activePrediction.contributing_factors as ContributingFactor[]} />
+                  </div>
+                )}
 
-              <div className="border-t border-slate-800/80 pt-3 text-[11px] text-slate-400 space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
-                  <span>1. ESP32 sends real temperature, vibration, current, and RPM readings to PostgreSQL.</span>
+                {activePrediction.explanation && (
+                  <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5 text-xs text-slate-300 flex items-start gap-2.5">
+                    <Info className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
+                    <p className="leading-relaxed">{activePrediction.explanation}</p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5 space-y-3">
+                <div className="flex items-start gap-2.5">
+                  <Info className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-400">
+                      No Prediction Available
+                    </h4>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      {activePrediction?.explanation ||
+                        'Predict IQ does not fabricate failure probabilities. A deterministic prototype prediction will be generated once a complete telemetry reading (temperature, vibration, current, RPM) is stored for this machine.'}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
-                  <span>2. Technicians log ground-truth maintenance records and failure events.</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
-                  <span>3. Once sufficient historical data exists, the scikit-learn ML pipeline trains and validates the model.</span>
+
+                <div className="border-t border-slate-800/80 pt-3 text-[11px] text-slate-400 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
+                    <span>1. ESP32 sends real temperature, vibration, current, and RPM readings to PostgreSQL.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
+                    <span>2. A deterministic prototype engine produces an explainable prediction with SHAP attributions.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
+                    <span>3. Validated ML training is deferred to Phase 6 after ground-truth labels are collected.</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

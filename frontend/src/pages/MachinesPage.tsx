@@ -162,16 +162,12 @@ export const MachinesPage: React.FC<MachinesPageProps> = ({
                   <th className="py-3.5 px-4">Category & Location</th>
                   <th className="py-3.5 px-4">Status</th>
                   <th className="py-3.5 px-4">Live Telemetry</th>
-                  <th className="py-3.5 px-4">AI Failure Risk</th>
-                  <th className="py-3.5 px-4">RUL</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-medium text-slate-300">
                 {filteredMachines.map((m) => {
-                  const reading = m.current_reading;
-                  const pred = m.latest_prediction;
-                  const riskPercent = pred?.failure_probability == null ? null : Math.round(pred.failure_probability * 100);
+                  const reading = m.latest_reading;
 
                   return (
                     <tr
@@ -189,7 +185,7 @@ export const MachinesPage: React.FC<MachinesPageProps> = ({
                               {m.name}
                             </div>
                             <div className="text-[11px] text-slate-400 font-mono">
-                              {m.esp32_device_id || 'ESP32-GEN-01'}
+                              {(m.devices && m.devices.length > 0) ? `${m.devices.length} device(s)` : 'No devices'}
                             </div>
                           </div>
                         </div>
@@ -228,43 +224,6 @@ export const MachinesPage: React.FC<MachinesPageProps> = ({
                         )}
                       </td>
 
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-2">
-                          <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-800">
-                            {riskPercent !== null && <div
-                              className={`h-full ${
-                                riskPercent >= 80
-                                  ? 'bg-rose-500'
-                                  : riskPercent >= 50
-                                  ? 'bg-amber-500'
-                                  : 'bg-emerald-500'
-                              }`}
-                              style={{ width: `${riskPercent}%` }}
-                            />}
-                          </div>
-                          <span
-                            className={`font-mono font-bold ${
-                              riskPercent >= 80
-                                ? 'text-rose-400'
-                                : riskPercent >= 50
-                                ? 'text-amber-400'
-                                : 'text-emerald-400'
-                            }`}
-                          >
-                            {riskPercent === null ? 'Not available' : `${riskPercent}%`}
-                          </span>
-                        </div>
-                        {pred?.component && (
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            {pred.component}
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="py-3.5 px-4 font-mono text-slate-200">
-                        {pred ? `${pred.remaining_life_days} Days` : '150 Days'}
-                      </td>
-
                       <td className="py-3.5 px-4 text-right">
                         <div
                           className="flex items-center justify-end gap-2"
@@ -296,9 +255,7 @@ export const MachinesPage: React.FC<MachinesPageProps> = ({
         /* Grid Cards View */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredMachines.map((m) => {
-            const reading = m.current_reading;
-            const pred = m.latest_prediction;
-                  const riskPercent = pred?.failure_probability == null ? null : Math.round(pred.failure_probability * 100);
+            const reading = m.latest_reading;
 
             return (
               <div
@@ -332,15 +289,15 @@ export const MachinesPage: React.FC<MachinesPageProps> = ({
                     </div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-slate-400">Risk</div>
-                    <div className="font-bold mt-0.5 text-slate-400">
-                      {riskPercent === null ? 'Not available' : `${riskPercent}%`}
+                    <div className="text-[10px] text-slate-400">Current</div>
+                    <div className="font-bold mt-0.5 text-cyan-400">
+                      {reading ? `${reading.current.toFixed(1)}A` : '--'}
                     </div>
                   </div>
                 </div>
 
                 <div className="mt-4 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800 pt-3">
-                  <span>RUL: <strong className="text-slate-200">{pred?.remaining_life_days == null ? 'Not available' : `${pred.remaining_life_days} Days`}</strong></span>
+                  <span>Status: <strong className="text-slate-200">{m.status}</strong></span>
                   <span className="flex items-center gap-1 text-cyan-400 font-semibold group-hover:translate-x-0.5 transition-transform">
                     View Diagnostics <ChevronRight className="h-3 w-3" />
                   </span>

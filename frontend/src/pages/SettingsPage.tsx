@@ -51,10 +51,12 @@ export const SettingsPage: React.FC = () => {
   -d '{
     "device_id": "ESP32_001",
     "machine_id": "M001",
+    "timestamp": "${new Date().toISOString()}",
     "temperature": 72.4,
     "vibration": 3.8,
     "current": 8.7,
-    "rpm": 1450.0
+    "rpm": 1450.0,
+    "source": "REAL_HARDWARE"
   }'`;
 
   const sampleHeartbeatCurl = `curl -X POST http://localhost:8000/api/devices/heartbeat \\

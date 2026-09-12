@@ -71,13 +71,15 @@ export interface Prediction {
   failure_probability?: number | null;
   failure_percentage?: number | null;
   component?: string | null;
-  remaining_life_days?: number | null;
-  confidence?: number | null;
   explanation?: string | null;
   recommended_action?: string | null;
   model_version?: string | null;
-  status?: string;
-  trained_model_exists?: boolean;
+  is_prototype?: boolean;
+  prediction_available?: boolean;
+  feature_importance?: Record<string, number>;
+  contributing_factors?: ContributingFactor[];
+  reasons?: string[];
+  created_at?: string;
 }
 
 export interface MaintenanceRecord {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Machine, SensorReading, Prediction, MaintenanceRecord, AIModelStatus } from '../types';
+import { Machine, SensorReading, Prediction, MaintenanceRecord, ContributingFactor } from '../types';
+import ShapAttributionBar from '../components/ShapAttributionBar';
 import api from '../services/api';
 import {
   ResponsiveContainer,
@@ -50,26 +51,23 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
   const [machine, setMachine] = useState<Machine | null>(null);
   const [sensorHistory, setSensorHistory] = useState<SensorReading[]>([]);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
-  const [aiStatus, setAiStatus] = useState<AIModelStatus | null>(null);
   const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeChartTab, setActiveChartTab] = useState<'all' | 'temp' | 'vib' | 'current'>('all');
 
   const fetchMachineData = async () => {
     try {
-      const [m, history, pred, maint, ais] = await Promise.all([
+      const [m, history, pred, maint] = await Promise.all([
         api.getMachineDetails(machineId).catch(() => null),
         api.getSensorData(machineId, 50).catch(() => []),
         api.getPrediction(machineId).catch(() => null),
         api.getMaintenanceHistory(machineId).catch(() => []),
-        api.getAIModelStatus().catch(() => null)
       ]);
 
       if (m) setMachine(m);
       setSensorHistory(history);
-      if (pred) setPrediction(pred);
+      setPrediction(pred);
       setMaintenanceRecords(maint);
-      if (ais) setAiStatus(ais);
     } catch (err) {
       console.error('Failed to load machine details:', err);
     } finally {
@@ -294,53 +292,85 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
               </h3>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              AI Status: <span className="text-amber-400 font-mono">{aiStatus?.status || 'Waiting for real historical data'}</span>
+              Model: <span className="text-amber-400 font-mono">{prediction?.model_version || 'Prototype engine'}</span>
+              {prediction?.is_prototype ? ' (prototype)' : ''}
             </p>
           </div>
           <div>{getStatusBadge(machine?.status)}</div>
         </div>
 
-        {/* 4 Outcome Cards */}
-        <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 text-center">
-          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-            <div className="text-xs font-medium text-slate-400">Failure Risk</div>
-            <div className="font-mono text-lg font-bold text-slate-300 mt-2">
-              Not available
-            </div>
-            <div className="text-[10px] text-slate-500 mt-1">Awaiting real data</div>
-          </div>
+        {/* Prediction Outcome Cards — real persisted prediction or explicit insufficient-data state */}
+        {prediction && prediction.prediction_available ? (
+          <>
+            <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 text-center">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs font-medium text-slate-400">Failure Probability</div>
+                <div className="font-mono text-lg font-bold text-slate-300 mt-2">
+                  {prediction.failure_probability != null
+                    ? `${(prediction.failure_probability * 100).toFixed(1)}%`
+                    : '—'}
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">Physics-prototype estimate</div>
+              </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-            <div className="text-xs font-medium text-slate-400">Critical Component</div>
-            <div className="font-mono text-lg font-bold text-slate-300 mt-2">
-              Not available
-            </div>
-            <div className="text-[10px] text-slate-500 mt-1">Requires trained model</div>
-          </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs font-medium text-slate-400">Component</div>
+                <div className="font-mono text-lg font-bold text-slate-300 mt-2">
+                  {prediction.component || '—'}
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">Highest-risk subsystem</div>
+              </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-            <div className="text-xs font-medium text-slate-400">Remaining Life</div>
-            <div className="font-mono text-lg font-bold text-slate-300 mt-2">
-              Not available
-            </div>
-            <div className="text-[10px] text-slate-500 mt-1">Empirical degradation</div>
-          </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs font-medium text-slate-400">Model Version</div>
+                <div className="font-mono text-lg font-bold text-slate-300 mt-2">
+                  {prediction.model_version || '—'}
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">
+                  {prediction.is_prototype ? 'Prototype' : 'Validated'}
+                </div>
+              </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-            <div className="text-xs font-medium text-slate-400">Confidence Score</div>
-            <div className="font-mono text-lg font-bold text-slate-300 mt-2">
-              Not available
+              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs font-medium text-slate-400">Recommended Action</div>
+                <div className="font-mono text-lg font-bold text-slate-300 mt-2">
+                  {prediction.recommended_action || '—'}
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">Engine output</div>
+              </div>
             </div>
-            <div className="text-[10px] text-slate-500 mt-1">Validation metric</div>
-          </div>
-        </div>
 
-        <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 flex items-start gap-2.5">
-          <Info className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
-          <p className="leading-relaxed">
-            Predict IQ strictly operates on real historical data. Once sufficient sensor telemetry ({sensorHistory.length} readings stored for this asset) and maintenance logs are stored in PostgreSQL, the ML training pipeline will generate genuine predictive models with SHAP explanations.
-          </p>
-        </div>
+            {(prediction.contributing_factors && prediction.contributing_factors.length > 0) && (
+              <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="h-4 w-4 text-purple-400" />
+                  <h4 className="text-sm font-bold text-white">Explanation — Contributing Factors (XAI)</h4>
+                </div>
+                <ShapAttributionBar factors={prediction.contributing_factors as ContributingFactor[]} />
+              </div>
+            )}
+
+            {prediction.explanation && (
+              <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 flex items-start gap-2.5">
+                <Info className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">{prediction.explanation}</p>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 flex items-start gap-2.5">
+            <Info className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="leading-relaxed">
+                {prediction?.explanation || 'No prediction recorded for this machine yet.'}
+              </p>
+              <p className="leading-relaxed mt-1 text-slate-500">
+                Inject a complete telemetry reading (temperature, vibration, current, RPM) to produce a prototype prediction.
+                {sensorHistory.length > 0 ? ` ${sensorHistory.length} reading(s) stored for this asset.` : ' No readings stored yet.'}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Real-time Telemetry Charts Section */}

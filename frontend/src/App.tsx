@@ -18,7 +18,7 @@ import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw } from 'luci
 
 export function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [selectedMachineId, setSelectedMachineId] = useState<string>('M001');
+  const [selectedMachineId, setSelectedMachineId] = useState<string>('');
   const [machines, setMachines] = useState<Machine[]>([]);
   const [fleetStats, setFleetStats] = useState<FleetStats>({
     total_machines: 0,
@@ -104,7 +104,7 @@ export function App() {
   };
 
   const handleOpenManualModal = (machineId?: string) => {
-    setModalTargetMachineId(machineId || selectedMachineId || 'M001');
+    setModalTargetMachineId(machineId || selectedMachineId || (machines.length > 0 ? machines[0].machine_id : ''));
     setIsManualModalOpen(true);
   };
 
@@ -125,7 +125,8 @@ export function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         activeAlertsCount={fleetStats.active_alerts}
-        criticalMachinesCount={0}
+        criticalMachinesCount={machines.filter(m => m.status === 'Critical').length}
+        backendOnline={backendOnline}
         isMobileOpen={isMobileNavOpen}
         onCloseMobile={() => setIsMobileNavOpen(false)}
       />

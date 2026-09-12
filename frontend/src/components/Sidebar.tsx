@@ -29,6 +29,7 @@ interface SidebarProps {
   onSelectTab: (tab: NavTab) => void;
   activeAlertsCount: number;
   criticalMachinesCount: number;
+  backendOnline: boolean;
   isMobileOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -38,6 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   activeAlertsCount,
   criticalMachinesCount,
+  backendOnline,
   isMobileOpen,
   onCloseMobile,
 }) => {
@@ -188,25 +190,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </nav>
 
-        {/* Bottom System Health Footer */}
+        {/* Bottom System Health Footer — derived from real backend reachability */}
         <div className="mt-auto border-t border-slate-800/80 pt-4 px-2">
           <div className="rounded-xl border border-slate-800/80 bg-slate-900/60 p-3">
             <div className="flex items-center justify-between text-xs">
               <span className="flex items-center gap-1.5 text-slate-300 font-medium">
-                <ShieldCheck className="h-4 w-4 text-emerald-400" /> API Gateway
+                <ShieldCheck className={`h-4 w-4 ${backendOnline ? 'text-emerald-400' : 'text-rose-400'}`} /> API Gateway
               </span>
-              <span className="flex items-center gap-1 font-mono text-[11px] text-emerald-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
-                ONLINE
+              <span className={`flex items-center gap-1 font-mono text-[11px] ${backendOnline ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${backendOnline ? 'bg-emerald-400 animate-ping' : 'bg-rose-400'}`} />
+                {backendOnline ? 'ONLINE' : 'OFFLINE'}
               </span>
             </div>
             <div className="mt-2 text-[11px] text-slate-400 font-mono flex justify-between">
-              <span>FastAPI Port:</span>
-              <span className="text-slate-300">3000 / 8000</span>
+              <span>Backend:</span>
+              <span className="text-slate-300">FastAPI / PostgreSQL</span>
             </div>
             <div className="mt-1 text-[11px] text-slate-400 font-mono flex justify-between">
-              <span>Model:</span>
-              <span className="text-cyan-400">PhysicsRule v2.4</span>
+              <span>Engine:</span>
+              <span className="text-cyan-400">Prototype physics-based</span>
             </div>
           </div>
         </div>
