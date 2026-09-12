@@ -246,7 +246,7 @@ def register_device(payload: DeviceCreate, db: Session = Depends(get_db)):
         firmware_version=payload.firmware_version or "1.0.0",
         status="OFFLINE",
         last_seen=None,
-        created_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc)
     )
     db.add(new_device)
     db.commit()
@@ -335,7 +335,7 @@ def record_device_heartbeat(payload: DeviceHeartbeatInput, db: Session = Depends
     Receives periodic ping from an active ESP32.
     Updates device.last_seen in PostgreSQL so dashboard displays real CONNECTED state.
     """
-    now = payload.timestamp or datetime.utcnow()
+    now = payload.timestamp or datetime.now(timezone.utc)
 
     try:
         machine = db.query(Machine).filter(Machine.machine_id == payload.machine_id).first()

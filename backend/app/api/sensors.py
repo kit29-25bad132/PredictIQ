@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from backend.app.core.config import get_settings
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, Device, SensorReading, Alert
+from backend.app.services.health_engine import evaluate_reading
 from backend.app.schemas.sensor import (
     SensorDataInput,
     SensorDataResponse,
@@ -31,7 +32,9 @@ DEVICE_TIMEOUT_SECONDS = get_settings().device_timeout_seconds
 def get_device_computed_status(last_seen: Optional[datetime]) -> str:
     if not last_seen:
         return "OFFLINE"
-    diff_seconds = (datetime.utcnow() - last_seen).total_seconds()
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    diff_seconds = (datetime.now(timezone.utc) - last_seen).total_seconds()
     return "ONLINE" if diff_seconds <= DEVICE_TIMEOUT_SECONDS else "OFFLINE"
 
 # ============================================================================
@@ -100,11 +103,14 @@ def ingest_sensor_data(payload: SensorDataInput, db: Session = Depends(get_db)):
             current=payload.current,
             rpm=payload.rpm,
             source=payload.source,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         db.add(new_reading)
         db.commit()
         db.refresh(new_reading)
+        evaluate_reading(machine, new_reading, db)
+        db.commit()
+        db.refresh(machine)
     except HTTPException:
         db.rollback()
         raise
@@ -242,7 +248,7 @@ def get_data_collection_status(db: Session = Depends(get_db)):
     latest_reading = db.query(SensorReading).order_by(desc(SensorReading.timestamp)).first()
     
     # Check active devices
-    cutoff = datetime.utcnow() - timedelta(seconds=DEVICE_TIMEOUT_SECONDS)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=DEVICE_TIMEOUT_SECONDS)
     active_devices = db.query(Device).filter(Device.last_seen >= cutoff).count()
 
     sensor_status = "ONLINE" if active_devices > 0 else "OFFLINE"

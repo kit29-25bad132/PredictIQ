@@ -7,7 +7,7 @@ maintenance records, and alerts. Strictly rejects invalid, NaN, or infinite numb
 from __future__ import annotations
 
 from typing import List, Optional, Literal, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 from pydantic import BaseModel, Field, field_validator
 
@@ -100,7 +100,7 @@ class DeviceHeartbeatInput(BaseModel):
     device_type: Optional[str] = Field(default="ESP32", example="ESP32")
     firmware_version: Optional[str] = Field(default="1.0.0", example="1.0.0")
     source: Literal["WOKWI", "REAL_HARDWARE"] = Field(..., example="WOKWI")
-    timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    timestamp: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
     temperature_status: Optional[str] = Field(default="NOT_CONFIGURED", example="NOT_CONFIGURED")
     vibration_status: Optional[str] = Field(default="NOT_CONFIGURED", example="NOT_CONFIGURED")
     current_status: Optional[str] = Field(default="NOT_CONFIGURED", example="NOT_CONFIGURED")
@@ -189,7 +189,7 @@ class MaintenanceCreate(BaseModel):
     technician: str = Field(..., example="David Zhang")
     status: Optional[str] = Field(default="Scheduled", example="Completed")
     failure_date: Optional[datetime] = Field(default=None)
-    maintenance_date: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    maintenance_date: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class MaintenanceResponse(BaseModel):
     id: int

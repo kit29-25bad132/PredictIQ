@@ -6,7 +6,7 @@ Manages ground-truth equipment failure logs and technician work orders.
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.app.db.database import get_db
 from backend.app.db.models import MaintenanceRecord, Machine
@@ -45,7 +45,7 @@ def create_maintenance(payload: MaintenanceCreate, db: Session = Depends(get_db)
             detail=f"Machine ID '{payload.machine_id}' does not exist in registry."
         )
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     new_rec = MaintenanceRecord(
         machine_id=payload.machine_id,
         component=payload.component,

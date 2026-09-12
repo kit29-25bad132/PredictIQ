@@ -6,7 +6,7 @@ Manages threshold anomaly notifications and resolution workflows.
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.app.db.database import get_db
 from backend.app.db.models import Alert, Machine
@@ -60,7 +60,7 @@ def resolve_alert(alert_id: int, db: Session = Depends(get_db)):
             detail=f"Alert with ID {alert_id} not found."
         )
     alert.status = "RESOLVED"
-    alert.resolved_at = datetime.utcnow()
+    alert.resolved_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(alert)
     return AlertResponse.from_orm(alert)
