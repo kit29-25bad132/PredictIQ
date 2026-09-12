@@ -228,15 +228,33 @@ class PredictionResponse(BaseModel):
     timestamp: datetime
     failure_probability: Optional[float] = None
     component: Optional[str] = None
-    remaining_life_days: Optional[int] = None
-    confidence: Optional[float] = None
     explanation: Optional[str] = None
     recommended_action: Optional[str] = None
     model_version: Optional[str] = None
+    is_prototype: bool = True
+    feature_importance: Dict[str, float] = Field(default_factory=dict)
+    contributing_factors: List[Dict[str, Any]] = Field(default_factory=list)
+    reasons: List[str] = Field(default_factory=list)
+    prediction_available: bool = True
     created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class PredictionInput(BaseModel):
+    machine_id: str = Field(..., min_length=1, max_length=50)
+    temperature: float = Field(..., ge=-50, le=300)
+    vibration: float = Field(..., ge=0, le=100)
+    current: float = Field(..., ge=0, le=1000)
+    rpm: float = Field(..., ge=0, le=60000)
+
+    @field_validator("temperature", "vibration", "current", "rpm")
+    @classmethod
+    def validate_finite_prediction_features(cls, value: float, info) -> float:
+        if not math.isfinite(value):
+            raise ValueError(f"Prediction field '{info.field_name}' must be finite")
+        return value
 
 # ============================================================================
 # 6. ALERT SCHEMAS

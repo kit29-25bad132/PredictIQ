@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 
-from ai.feature_engineering import FEATURE_NAMES, extract_features
+from ml.feature_engineering import FEATURE_NAMES, extract_features
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "model")
 MODEL_PATH = os.path.join(MODEL_DIR, "real_model.joblib")

@@ -1,159 +1,124 @@
-"""
-Predict IQ - AI Prediction & Model Status Endpoints (PostgreSQL Architecture)
-Strictly adheres to real-data policy: does NOT fabricate predictions without a validated ML model.
-Reports transparent model readiness status.
-"""
+"""Typed prediction and explanation API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+import json
+from datetime import datetime, timezone
 from typing import List, Optional
-from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
 
 from backend.app.db.database import get_db
-from backend.app.db.models import Machine, Prediction, SensorReading, MaintenanceRecord
-from backend.app.schemas.sensor import (
-    AIModelStatusResponse,
-    PredictionResponse
-)
-from backend.services.prediction_service import prediction_service
+from backend.app.db.models import Machine, Prediction
+from backend.app.schemas.sensor import AIModelStatusResponse, PredictionInput, PredictionResponse
+from backend.app.services.prediction_service import prediction_service
 
-router = APIRouter(tags=["AI Model & Predictions (Real Data First)"])
+router = APIRouter(tags=["Predictions & Explanations"])
 
-@router.get(
-    "/model-status",
-    response_model=AIModelStatusResponse,
-    summary="Get current AI model training status and readiness"
-)
-def get_ai_model_status(db: Session = Depends(get_db)):
-    """
-    Returns the real state of the trained model and the PostgreSQL dataset.
-    """
-    total_readings = db.query(SensorReading).count()
-    total_maintenance = db.query(MaintenanceRecord).count()
-    model_status = prediction_service.get_status()
-    trained = model_status.get("trained", False)
 
-    return AIModelStatusResponse(
-        status=model_status["status"],
-        prediction="Available" if trained else "Not available",
-        remaining_useful_life="Available" if trained else "Not available",
-        confidence="Available" if trained else "Not available",
-        trained_model_exists=trained,
-        message=(
-            f"Currently collecting real IoT telemetry in PostgreSQL ({total_readings} sensor readings, "
-            f"{total_maintenance} maintenance records stored). {model_status['message']}"
-        )
+def response_from_prediction(prediction: Prediction) -> PredictionResponse:
+    data = json.loads(prediction.explanation_data or "{}")
+    return PredictionResponse(
+        id=prediction.id,
+        machine_id=prediction.machine_id,
+        timestamp=prediction.timestamp,
+        failure_probability=prediction.failure_probability,
+        component=prediction.component,
+        explanation=prediction.explanation,
+        recommended_action=prediction.recommended_action,
+        model_version=prediction.model_version,
+        is_prototype=prediction.is_prototype,
+        feature_importance=data.get("feature_importance", {}),
+        contributing_factors=data.get("contributing_factors", []),
+        reasons=data.get("reasons", []),
+        prediction_available=True,
+        created_at=prediction.created_at,
     )
 
-@router.post(
-    "/train-model",
-    summary="Train the AI model from stored real telemetry"
-)
-def train_ai_model(db: Session = Depends(get_db)):
-    """
-    Trains exclusively from sensor readings and maintenance records persisted in PostgreSQL.
-    The AI pipeline enforces its minimum sample threshold and returns a transparent result
-    when training is not yet possible.
-    """
-    readings = [
-        {
-            "is_valid": True,
-            "temperature": reading.temperature,
-            "vibration": reading.vibration,
-            "current": reading.current,
-            "rpm": reading.rpm,
-            "timestamp": reading.timestamp,
-            "machine_id": reading.machine_id,
-        }
-        for reading in db.query(SensorReading).all()
-    ]
-    maintenance_records = [
-        {
-            "failure_date": record.failure_date,
-            "component": record.component,
-            "machine_id": record.machine_id,
-        }
-        for record in db.query(MaintenanceRecord).all()
-    ]
 
-    return prediction_service.train_model(readings, maintenance_records)
+def insufficient_data(machine_id: str) -> PredictionResponse:
+    return PredictionResponse(
+        machine_id=machine_id,
+        timestamp=datetime.now(timezone.utc),
+        is_prototype=True,
+        prediction_available=False,
+        explanation="Prediction requires a complete temperature, vibration, current, and RPM reading.",
+    )
 
-@router.get(
-    "/machines/{machine_id}/prediction",
-    summary="Get latest AI prediction for a specific machine asset"
-)
-def get_machine_prediction(machine_id: str, db: Session = Depends(get_db)):
-    """
-    Queries latest prediction for machine.
-    If no validated model exists or no predictions have been generated, returns 'Not available'.
-    Never outputs fake or hardcoded percentages.
-    """
+
+@router.get("/model-status", response_model=AIModelStatusResponse)
+def get_ai_model_status() -> AIModelStatusResponse:
+    model_status = prediction_service.get_status()
+    return AIModelStatusResponse(
+        status=model_status["status"],
+        prediction="Available",
+        remaining_useful_life="Not available",
+        confidence="Not available",
+        trained_model_exists=model_status["trained"],
+        message=model_status["message"],
+    )
+
+
+@router.post("/predict", response_model=PredictionResponse, status_code=status.HTTP_201_CREATED)
+def execute_prediction(payload: PredictionInput, db: Session = Depends(get_db)) -> PredictionResponse:
+    machine = db.query(Machine).filter(Machine.machine_id == payload.machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail=f"Machine '{payload.machine_id}' does not exist in registry.")
+
+    result = prediction_service.predict(
+        machine_id=machine.machine_id,
+        temperature=payload.temperature,
+        vibration=payload.vibration,
+        current=payload.current,
+        rpm=payload.rpm,
+        rated_rpm=machine.rated_rpm if machine.rated_rpm is not None else 1450.0,
+        rated_current=machine.rated_current if machine.rated_current is not None else 10.0,
+        max_temp=machine.max_temp if machine.max_temp is not None else 75.0,
+        max_vibration=machine.max_vibration if machine.max_vibration is not None else 4.5,
+        machine_type=machine.type,
+    )
+    now = datetime.now(timezone.utc)
+    prediction = Prediction(
+        machine_id=machine.machine_id,
+        timestamp=now,
+        failure_probability=result["failure_probability"],
+        component=result["component"],
+        explanation=result["explanation"],
+        recommended_action=result["recommended_action"],
+        model_version=result["model_version"],
+        is_prototype=result["is_prototype"],
+        explanation_data=json.dumps({
+            "feature_importance": result["feature_importance"],
+            "contributing_factors": result["contributing_factors"],
+            "reasons": result["reasons"],
+        }),
+        created_at=now,
+    )
+    db.add(prediction)
+    db.commit()
+    db.refresh(prediction)
+    return response_from_prediction(prediction)
+
+
+@router.get("/machines/{machine_id}/prediction", response_model=PredictionResponse)
+def get_machine_prediction(machine_id: str, db: Session = Depends(get_db)) -> PredictionResponse:
     machine = db.query(Machine).filter(Machine.machine_id == machine_id).first()
     if not machine:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Machine '{machine_id}' does not exist in registry."
-        )
-
-    latest_pred = (
+        raise HTTPException(status_code=404, detail=f"Machine '{machine_id}' does not exist in registry.")
+    latest_prediction = (
         db.query(Prediction)
         .filter(Prediction.machine_id == machine_id)
         .order_by(desc(Prediction.timestamp))
         .first()
     )
+    if latest_prediction:
+        return response_from_prediction(latest_prediction)
+    return insufficient_data(machine_id)
 
-    if latest_pred:
-        return PredictionResponse.from_orm(latest_pred)
 
-    return {
-        "machine_id": machine_id,
-        "status": "Waiting for real historical data",
-        "prediction": "Not available",
-        "failure_probability": None,
-        "component": "Not available",
-        "remaining_life_days": None,
-        "confidence": None,
-        "explanation": "No trained ML model has been validated yet. System is collecting real sensor telemetry in PostgreSQL.",
-        "recommended_action": "Continue real ESP32 sensor telemetry ingestion.",
-        "trained_model_exists": False
-    }
-
-@router.post(
-    "/predict",
-    summary="Execute AI failure prediction"
-)
-def execute_prediction(payload: dict, db: Session = Depends(get_db)):
-    """
-    Inference endpoint. Returns transparent status that real ML training is pending.
-    """
-    return {
-        "machine_id": payload.get("machine_id", "M001"),
-        "status": "Waiting for real historical data",
-        "prediction": "Not available",
-        "failure_probability": None,
-        "component": "Not available",
-        "remaining_life_days": None,
-        "confidence": None,
-        "explanation": "Predictions are disabled until the ML model is trained on real historical PostgreSQL telemetry.",
-        "recommended_action": "Ingest real sensor readings via POST /api/sensor-data.",
-        "trained_model_exists": False
-    }
-
-@router.get(
-    "/predictions",
-    response_model=List[PredictionResponse],
-    summary="List stored predictions from PostgreSQL"
-)
-def list_predictions(
-    machine_id: Optional[str] = Query(None, description="Optional machine ID filter"),
-    db: Session = Depends(get_db)
-):
-    """
-    Returns actual prediction records from PostgreSQL.
-    """
+@router.get("/predictions", response_model=List[PredictionResponse])
+def list_predictions(machine_id: Optional[str] = None, db: Session = Depends(get_db)) -> List[PredictionResponse]:
     query = db.query(Prediction)
     if machine_id:
         query = query.filter(Prediction.machine_id == machine_id)
-    preds = query.order_by(desc(Prediction.timestamp)).all()
-    return [PredictionResponse.from_orm(p) for p in preds]
+    return [response_from_prediction(item) for item in query.order_by(desc(Prediction.timestamp)).all()]

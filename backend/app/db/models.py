@@ -4,7 +4,7 @@ Defines production relational schemas for machines, IoT devices, real sensor rea
 maintenance records, ML predictions, and alerts.
 """
 
-from sqlalchemy import CheckConstraint, Column, Integer, Float, String, DateTime, Text, ForeignKey, Index
+from sqlalchemy import Boolean, CheckConstraint, Column, Integer, Float, String, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -134,12 +134,14 @@ class Prediction(Base):
     
     failure_probability = Column(Float, nullable=False)
     component = Column(String(100), nullable=False)
-    remaining_life_days = Column(Integer, nullable=False)
-    confidence = Column(Float, nullable=False)
+    remaining_life_days = Column(Integer, nullable=True)
+    confidence = Column(Float, nullable=True)
     
     explanation = Column(Text, nullable=True)
     recommended_action = Column(Text, nullable=True)
     model_version = Column(String(100), nullable=True)
+    is_prototype = Column(Boolean, nullable=False, default=True)
+    explanation_data = Column(Text, nullable=True)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
