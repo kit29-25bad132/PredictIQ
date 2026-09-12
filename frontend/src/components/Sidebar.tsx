@@ -10,7 +10,8 @@ import {
   Database,
   Settings,
   Radio,
-  ShieldCheck
+  ShieldCheck,
+  ClipboardCheck
 } from 'lucide-react';
 
 export type NavTab = 
@@ -21,6 +22,7 @@ export type NavTab =
   | 'predictions'
   | 'maintenance'
   | 'alerts'
+  | 'feedback'
   | 'sensor-data'
   | 'settings';
 
@@ -89,6 +91,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: AlertTriangle,
       badge: activeAlertsCount > 0 ? `${activeAlertsCount}` : null,
       badgeColor: 'rose',
+    },
+    {
+      id: 'feedback' as NavTab,
+      label: 'Feedback & Ground Truth',
+      icon: ClipboardCheck,
+      badge: null,
     },
     {
       id: 'sensor-data' as NavTab,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Machine, Prediction, ContributingFactor } from '../types';
+import { Machine, Prediction, ContributingFactor, FeedbackContext } from '../types';
 import ShapAttributionBar from '../components/ShapAttributionBar';
 import api from '../services/api';
 import {
@@ -19,18 +19,21 @@ import {
   RefreshCw,
   Database,
   Info,
+  ClipboardCheck,
 } from 'lucide-react';
 
 interface PredictionsPageProps {
   machines: Machine[];
   onSelectMachine: (id: string) => void;
   onOpenManualModal: (id: string) => void;
+  onRecordFeedback?: (context: FeedbackContext) => void;
 }
 
 export const PredictionsPage: React.FC<PredictionsPageProps> = ({
   machines,
   onSelectMachine,
   onOpenManualModal,
+  onRecordFeedback,
 }) => {
   const [selectedMachineId, setSelectedMachineId] = useState<string>(
     machines.length > 0 ? machines[0].machine_id : 'M001'
@@ -311,6 +314,23 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
                     <div className="text-[10px] text-slate-500 mt-1">Engine output</div>
                   </div>
                 </div>
+
+                {onRecordFeedback && activePrediction?.id != null && (
+                  <div className="mt-6 flex items-center justify-end">
+                    <button
+                      onClick={() =>
+                        onRecordFeedback({
+                          machine_id: selectedMachineId,
+                          prediction_id: Number(activePrediction.id),
+                        })
+                      }
+                      className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3.5 py-2 text-xs font-bold text-cyan-300 hover:bg-cyan-500 hover:text-slate-950 transition-all"
+                    >
+                      <ClipboardCheck className="h-3.5 w-3.5" />
+                      <span>Record Feedback for this Prediction</span>
+                    </button>
+                  </div>
+                )}
 
                 {(activePrediction.contributing_factors && activePrediction.contributing_factors.length > 0) && (
                   <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5">

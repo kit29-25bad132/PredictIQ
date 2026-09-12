@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime, timezone
 import math
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ============================================================================
 # 1. SENSOR TELEMETRY SCHEMAS
@@ -269,6 +269,102 @@ class AlertResponse(BaseModel):
     status: str
     created_at: datetime
     resolved_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+# ============================================================================
+# 6b. FEEDBACK / GROUND-TRUTH SCHEMAS
+# ============================================================================
+class FeedbackCreate(BaseModel):
+    machine_id: str = Field(..., min_length=1, max_length=50)
+    prediction_id: Optional[int] = Field(default=None, description="Links to a persisted prediction for prediction-vs-reality tracking")
+    alert_id: Optional[int] = Field(default=None, description="Links to the originating alert, if any")
+    maintenance_record_id: Optional[int] = Field(default=None, description="Links to the associated maintenance work order, if any")
+    observed_condition: str = Field(..., min_length=1, description="Technician-observed equipment condition at inspection")
+    actual_fault: Optional[str] = Field(default=None, max_length=200, description="Confirmed root-cause fault (e.g. Bearing spalling)")
+    root_cause: Optional[str] = Field(default=None, description="Identified root cause of the fault")
+    symptoms: Optional[str] = Field(default=None, description="Observed symptoms matching alert/prediction")
+    action_taken: Optional[str] = Field(default=None, description="Maintenance action actually performed")
+    parts_replaced: Optional[str] = Field(default=None, description="Parts replaced during the action")
+    severity: str = Field(default="Warning", description="Critical, Warning, or Info")
+    outcome: str = Field(default="Confirmed", description="Confirmed, Not Confirmed, or Cancelled")
+    technician_notes: Optional[str] = Field(default=None, description="Free-form technician notes")
+    prediction_correct: Optional[bool] = Field(default=None, description="Whether the linked prediction matched the actual fault")
+    feedback_source: str = Field(default="MANUAL", description="MANUAL or INSPECTION")
+
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, v: str) -> str:
+        allowed = {"Critical", "Warning", "Info"}
+        if v not in allowed:
+            raise ValueError(f"severity must be one of {allowed}, got {v!r}")
+        return v
+
+    @field_validator("outcome")
+    @classmethod
+    def validate_outcome(cls, v: str) -> str:
+        allowed = {"Confirmed", "Not Confirmed", "Cancelled"}
+        if v not in allowed:
+            raise ValueError(f"outcome must be one of {allowed}, got {v!r}")
+        return v
+
+    @field_validator("feedback_source")
+    @classmethod
+    def validate_feedback_source(cls, v: str) -> str:
+        allowed = {"MANUAL", "INSPECTION"}
+        if v not in allowed:
+            raise ValueError(f"feedback_source must be one of {allowed}, got {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_prediction_link(self) -> "FeedbackCreate":
+        if self.prediction_correct is True and self.prediction_id is None:
+            raise ValueError("prediction_correct=True requires a prediction_id link")
+        return self
+
+
+class FeedbackResponse(BaseModel):
+    id: int
+    machine_id: str
+    prediction_id: Optional[int] = None
+    alert_id: Optional[int] = None
+    maintenance_record_id: Optional[int] = None
+    observed_condition: str
+    actual_fault: Optional[str] = None
+    root_cause: Optional[str] = None
+    symptoms: Optional[str] = None
+    action_taken: Optional[str] = None
+    parts_replaced: Optional[str] = None
+    severity: str
+    outcome: str
+    technician_notes: Optional[str] = None
+    prediction_correct: Optional[bool] = None
+    feedback_source: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FeedbackListEntry(BaseModel):
+    id: int
+    machine_id: str
+    prediction_id: Optional[int] = None
+    alert_id: Optional[int] = None
+    maintenance_record_id: Optional[int] = None
+    observed_condition: str
+    actual_fault: Optional[str] = None
+    root_cause: Optional[str] = None
+    symptoms: Optional[str] = None
+    action_taken: Optional[str] = None
+    parts_replaced: Optional[str] = None
+    severity: str
+    outcome: str
+    technician_notes: Optional[str] = None
+    prediction_correct: Optional[bool] = None
+    feedback_source: str
+    created_at: datetime
 
     class Config:
         from_attributes = True

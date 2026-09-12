@@ -34,6 +34,7 @@ class Machine(Base):
     maintenance_records = relationship("MaintenanceRecord", back_populates="machine", cascade="all, delete-orphan")
     predictions = relationship("Prediction", back_populates="machine", cascade="all, delete-orphan")
     alerts = relationship("Alert", back_populates="machine", cascade="all, delete-orphan")
+    feedback_records = relationship("FeedbackRecord", back_populates="machine", cascade="all, delete-orphan")
     __table_args__ = (
         CheckConstraint(
             "status IN ('Healthy', 'Warning', 'Critical', 'Maintenance')",
@@ -174,4 +175,38 @@ class Alert(Base):
         Index("ix_alerts_machine_created", "machine_id", "created_at"),
         CheckConstraint("severity IN ('Critical', 'Warning', 'Info')", name="ck_alerts_severity"),
         CheckConstraint("status IN ('ACTIVE', 'ACKNOWLEDGED', 'RESOLVED')", name="ck_alerts_status"),
+    )
+
+# ============================================================================
+# 7. FEEDBACK / GROUND-TRUTH RECORDS TABLE (Technician-Observed Outcomes)
+# ============================================================================
+class FeedbackRecord(Base):
+    __tablename__ = "feedback_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    machine_id = Column(String(50), ForeignKey("machines.machine_id", ondelete="CASCADE"), index=True, nullable=False)
+    prediction_id = Column(Integer, ForeignKey("predictions.id", ondelete="SET NULL"), index=True, nullable=True)
+    alert_id = Column(Integer, ForeignKey("alerts.id", ondelete="SET NULL"), index=True, nullable=True)
+    maintenance_record_id = Column(Integer, ForeignKey("maintenance_records.id", ondelete="SET NULL"), index=True, nullable=True)
+
+    observed_condition = Column(Text, nullable=False)
+    actual_fault = Column(String(200), nullable=True)
+    root_cause = Column(Text, nullable=True)
+    symptoms = Column(Text, nullable=True)
+    action_taken = Column(Text, nullable=True)
+    parts_replaced = Column(Text, nullable=True)
+    severity = Column(String(50), nullable=False)  # Critical, Warning, Info
+    outcome = Column(String(50), nullable=False)  # Confirmed, Not Confirmed, Cancelled
+    technician_notes = Column(Text, nullable=True)
+    prediction_correct = Column(Boolean, nullable=True)
+    feedback_source = Column(String(30), nullable=False, default="MANUAL", server_default="MANUAL")  # MANUAL, INSPECTION
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationship
+    machine = relationship("Machine", back_populates="feedback_records")
+
+    __table_args__ = (
+        CheckConstraint("severity IN ('Critical', 'Warning', 'Info')", name="ck_feedback_records_severity"),
+        CheckConstraint("outcome IN ('Confirmed', 'Not Confirmed', 'Cancelled')", name="ck_feedback_records_outcome"),
+        CheckConstraint("feedback_source IN ('MANUAL', 'INSPECTION')", name="ck_feedback_records_source"),
     )

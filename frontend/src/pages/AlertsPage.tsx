@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Machine, Alert } from '../types';
+import { Machine, Alert, FeedbackContext } from '../types';
 import api from '../services/api';
 import {
   AlertTriangle,
@@ -10,19 +10,22 @@ import {
   Check,
   RefreshCw,
   Clock,
-  Database
+  Database,
+  ClipboardCheck
 } from 'lucide-react';
 
 interface AlertsPageProps {
   machines: Machine[];
   onSelectMachine: (id: string) => void;
   onRefreshAlerts?: () => void;
+  onRecordFeedback?: (context: FeedbackContext) => void;
 }
 
 export const AlertsPage: React.FC<AlertsPageProps> = ({
   machines,
   onSelectMachine,
   onRefreshAlerts,
+  onRecordFeedback,
 }) => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
@@ -238,25 +241,38 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
                   </div>
 
                   {/* Actions */}
-                  {!isResolved && (
-                    <div className="flex items-center gap-2 self-end md:self-center">
-                      {!isAck && (
-                        <button
-                          onClick={() => handleAcknowledge(alert.id)}
-                          className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 hover:text-white"
-                        >
-                          Acknowledge
-                        </button>
-                      )}
+                  <div className="flex items-center gap-2 self-end md:self-center">
+                    {onRecordFeedback && (
                       <button
-                        onClick={() => handleResolve(alert.id)}
-                        className="flex items-center gap-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500 hover:text-slate-950 transition-all"
+                        onClick={() =>
+                          onRecordFeedback({ machine_id: alert.machine_id, alert_id: Number(alert.id) })
+                        }
+                        className="flex items-center gap-1 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 text-xs font-bold text-cyan-300 hover:bg-cyan-500 hover:text-slate-950 transition-all"
                       >
-                        <Check className="h-3.5 w-3.5" />
-                        <span>Mark Resolved</span>
+                        <ClipboardCheck className="h-3.5 w-3.5" />
+                        <span>Record Feedback</span>
                       </button>
-                    </div>
-                  )}
+                    )}
+                    {!isResolved && (
+                      <>
+                        {!isAck && (
+                          <button
+                            onClick={() => handleAcknowledge(alert.id)}
+                            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 hover:text-white"
+                          >
+                            Acknowledge
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleResolve(alert.id)}
+                          className="flex items-center gap-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500 hover:text-slate-950 transition-all"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                          <span>Mark Resolved</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             );

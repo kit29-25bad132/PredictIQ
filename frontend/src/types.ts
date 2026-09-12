@@ -167,3 +167,50 @@ export interface MaintenanceInputPayload {
   failure_date?: string;
   maintenance_date?: string;
 }
+
+export type FeedbackSeverity = 'Critical' | 'Warning' | 'Info';
+export type FeedbackOutcome = 'Confirmed' | 'Not Confirmed' | 'Cancelled';
+
+export interface FeedbackRecord {
+  id: number | string;
+  machine_id: string;
+  prediction_id?: number | null;
+  alert_id?: number | null;
+  maintenance_record_id?: number | null;
+  observed_condition: string;
+  actual_fault?: string | null;
+  root_cause?: string | null;
+  symptoms?: string | null;
+  action_taken?: string | null;
+  parts_replaced?: string | null;
+  severity: FeedbackSeverity;
+  outcome: FeedbackOutcome;
+  technician_notes?: string | null;
+  prediction_correct?: boolean | null;
+  feedback_source: 'MANUAL' | 'INSPECTION';
+  created_at: string;
+}
+
+export interface FeedbackInputPayload {
+  machine_id: string;
+  prediction_id?: number | null;
+  alert_id?: number | null;
+  maintenance_record_id?: number | null;
+  observed_condition: string;
+  actual_fault?: string | null;
+  root_cause?: string | null;
+  symptoms?: string | null;
+  action_taken?: string | null;
+  parts_replaced?: string | null;
+  severity: FeedbackSeverity;
+  outcome: FeedbackOutcome;
+  technician_notes?: string | null;
+  prediction_correct?: boolean | null;
+  feedback_source: 'MANUAL' | 'INSPECTION';
+}
+
+export interface FeedbackContext {
+  machine_id: string;
+  prediction_id?: number | null;
+  alert_id?: number | null;
+}

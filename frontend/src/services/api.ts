@@ -15,7 +15,9 @@ import {
   AIModelStatus,
   SensorInputPayload,
   MaintenanceInputPayload,
-  MachineInputPayload
+  MachineInputPayload,
+  FeedbackRecord,
+  FeedbackInputPayload
 } from '../types';
 
 class PredictIQApiService {
@@ -278,6 +280,33 @@ class PredictIQApiService {
     return this.fetchJson<Alert>(`/alerts/${alertId}/resolve`, {
       method: 'POST',
     });
+  }
+
+  // =========================================================================
+  // 8. FEEDBACK / GROUND-TRUTH RECORDS (POSTGRESQL)
+  // =========================================================================
+  public async getFeedback(machineId?: string): Promise<FeedbackRecord[]> {
+    const query = machineId ? `?machine_id=${encodeURIComponent(machineId)}` : '';
+    return this.fetchJson<FeedbackRecord[]>(`/feedback${query}`);
+  }
+
+  public async getMachineFeedback(machineId: string): Promise<FeedbackRecord[]> {
+    return this.fetchJson<FeedbackRecord[]>(`/machines/${encodeURIComponent(machineId)}/feedback`);
+  }
+
+  public async addFeedback(data: FeedbackInputPayload): Promise<FeedbackRecord> {
+    return this.fetchJson<FeedbackRecord>('/feedback', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // =========================================================================
+  // 9. PREDICTIONS LIST (for prediction-vs-reality comparison)
+  // =========================================================================
+  public async getPredictions(machineId?: string): Promise<Prediction[]> {
+    const query = machineId ? `?machine_id=${encodeURIComponent(machineId)}` : '';
+    return this.fetchJson<Prediction[]>(`/predictions${query}`);
   }
 }
 

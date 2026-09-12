@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Machine, FleetStats } from './types';
+import { Machine, FleetStats, FeedbackContext } from './types';
 import api from './services/api';
 import Sidebar, { NavTab } from './components/Sidebar';
 import Header from './components/Header';
@@ -10,6 +10,7 @@ import LiveMonitoringPage from './pages/LiveMonitoringPage';
 import PredictionsPage from './pages/PredictionsPage';
 import MaintenancePage from './pages/MaintenancePage';
 import AlertsPage from './pages/AlertsPage';
+import FeedbackPage from './pages/FeedbackPage';
 import SensorDataPage from './pages/SensorDataPage';
 import SettingsPage from './pages/SettingsPage';
 import ManualSensorModal from './components/ManualSensorModal';
@@ -38,6 +39,9 @@ export function App() {
   const [isManualModalOpen, setIsManualModalOpen] = useState<boolean>(false);
   const [modalTargetMachineId, setModalTargetMachineId] = useState<string | undefined>(undefined);
   const [isAddMachineModalOpen, setIsAddMachineModalOpen] = useState<boolean>(false);
+
+  // Feedback form pre-link context (opened from an alert or prediction)
+  const [feedbackInitialContext, setFeedbackInitialContext] = useState<FeedbackContext | null>(null);
 
   // Toast notifications
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'alert'; text: string } | null>(null);
@@ -106,6 +110,11 @@ export function App() {
   const handleOpenManualModal = (machineId?: string) => {
     setModalTargetMachineId(machineId || selectedMachineId || (machines.length > 0 ? machines[0].machine_id : ''));
     setIsManualModalOpen(true);
+  };
+
+  const handleOpenFeedback = (context: FeedbackContext) => {
+    setFeedbackInitialContext(context);
+    setActiveTab('feedback');
   };
 
   const handleRetryBackend = async () => {
@@ -233,6 +242,7 @@ export function App() {
               machines={machines}
               onSelectMachine={handleSelectMachine}
               onOpenManualModal={handleOpenManualModal}
+              onRecordFeedback={handleOpenFeedback}
             />
           )}
 
@@ -248,6 +258,15 @@ export function App() {
               machines={machines}
               onSelectMachine={handleSelectMachine}
               onRefreshAlerts={loadFleetData}
+              onRecordFeedback={handleOpenFeedback}
+            />
+          )}
+
+          {activeTab === 'feedback' && (
+            <FeedbackPage
+              machines={machines}
+              initialContext={feedbackInitialContext}
+              onClearInitialContext={() => setFeedbackInitialContext(null)}
             />
           )}
 
