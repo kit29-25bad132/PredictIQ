@@ -1,0 +1,57 @@
+# PredictIQ Backend Deployment (Phase 8)
+#
+# Builds the FastAPI backend with all Python dependencies and runs migrations
+# before starting the application. No secrets are baked into this image.
+#
+# Service: backend
+# Port: 8000
+# Volume: ./data/postgres (mounted by docker-compose, not here)
+#
+# Environment variables required (injected at runtime):
+#   DATABASE_URL - PostgreSQL connection string
+#   DEVICE_API_KEY - optional write-gate token for telemetry ingestion
+#   CORS_ORIGINS - comma-separated allowed origins (empty = no browser CORS)
+#   APP_ENV - deployment environment name (default: production)
+#
+# No credentials, passwords, API keys, or certificates are committed.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies for psycopg binary and build tools
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better layer caching
+COPY backend/requirements.txt ./requirements.txt
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY backend/ ./backend/
+COPY ml/ ./ml/
+
+# Make the entrypoint executable
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Expose the FastAPI port
+EXPOSE 8000
+
+# Set environment defaults (no real secrets)
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    APP_ENV=production
+
+# Healthcheck: verify the health endpoint responds
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; \
+    urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)" || exit 1
+
+# Run migrations then start the application
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
