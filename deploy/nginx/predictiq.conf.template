@@ -1,0 +1,93 @@
+# PredictIQ nginx reverse proxy configuration (TLS termination).
+#
+# Rendered at container start by the official nginx image's envsubst
+# bootstrap: /etc/nginx/templates/predictiq.conf.template ->
+# /etc/nginx/conf.d/predictiq.conf. Only environment variables defined in
+# the container are substituted (SERVER_NAME); nginx variables such as
+# $host/$request_uri are left untouched.
+#
+# Layout per deploy/TLS_SETUP.md Option A:
+#   - 80:  ACME HTTP-01 challenges, otherwise redirect to HTTPS
+#   - 443: TLS termination; / -> frontend:3000, /api -> backend:8000
+#
+# Expected mounted files (read-only, gitignored):
+#   /etc/nginx/certs/fullchain.pem
+#   /etc/nginx/certs/privkey.pem
+
+# ---------------------------------------------------------------- 80: redirect
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${SERVER_NAME};
+
+    # ACME HTTP-01 challenges: answered over plain HTTP, everything else is
+    # redirected so webroot-based certbot renewals work without downtime.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location = /nginx-health {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ------------------------------------------------------- 443: TLS termination
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${SERVER_NAME};
+
+    # TLS material (Let's Encrypt or provider certificate; never committed).
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+
+    # Modern TLS only (TLS_SETUP.md: TLS 1.2+).
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:predictiq_ssl:10m;
+    ssl_session_tickets off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    client_max_body_size 2m;
+
+    # Backend API: proxied over the internal Docker network by service name.
+    location /api/ {
+        proxy_pass http://backend:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_read_timeout 60s;
+        # Honest failure mode: a 502 JSON body from this file is replaced by
+        # the backend's own error semantics once it is reachable again.
+        proxy_intercept_errors off;
+    }
+
+    # Frontend: Node server serves the built SPA and proxies same-origin /api
+    # as well; requests arrive here first, so /api is handled above.
+    location / {
+        proxy_pass http://frontend:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}

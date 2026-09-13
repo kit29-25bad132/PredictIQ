@@ -1,25 +1,50 @@
-# PredictIQ Deployment (Phase 8)
+# PredictIQ Deployment (Phase 8 - production hardening)
 #
-# Complete deployment stack for PredictIQ V1 platform.
+# Complete deployment stack for the PredictIQ V1 platform.
 #
 # Services:
-#   - frontend: React/Vite dashboard served by Node.js
-#   - backend: FastAPI backend with PostgreSQL
-#   - database: PostgreSQL database (persistent volume)
+#   - frontend: React/Vite dashboard served by Node.js (same-origin /api proxy)
+#   - backend:  FastAPI backend with PostgreSQL
+#   - database: PostgreSQL database (persistent volume, INTERNAL network only)
+#   - proxy:    nginx TLS-terminating reverse proxy (optional, --profile proxy)
 #
-# Secrets: all injected via .env (gitignored) or runtime environment.
+# Secrets: all injected via deploy/.env (gitignored) or runtime environment.
 # No credentials are committed or hardcoded.
 #
 # Network: services communicate on an internal Docker network.
-# The frontend reaches the backend via the service name "backend" on port 8000.
+#   - The frontend proxies same-origin /api requests to http://backend:8000.
+#   - The backend reaches PostgreSQL at database:5432.
+#   - The nginx proxy (profile "proxy") reaches frontend:3000 and backend:8000.
+#
+# Host exposure:
+#   - PostgreSQL: NEVER exposed to the host (remove this surface entirely).
+#   - frontend/backend: published on 127.0.0.1 only (local demos / debugging);
+#     they are never required publicly when the proxy profile is used.
+#   - proxy: publishes 80/443 (the only public surface in production).
+#
+# Usage:
+#   Local demo (no TLS):
+#     docker compose --env-file deploy/.env -f deploy/docker-compose.yml up --build -d
+#     -> http://localhost:3000
+#
+#   Production (TLS via nginx, see deploy/TLS_SETUP.md and deploy/README.md):
+#     docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile proxy up --build -d
+#     -> https://<your-domain>
+
+name: predictiq
 
 services:
   frontend:
     build:
-      context: .
+      # Relative to THIS compose file's directory (deploy/): ".." is the repo
+      # root, which is the build context both Dockerfiles expect.
+      context: ..
       dockerfile: deploy/Dockerfile
+    # Loopback-only by default: reachable for local demos and host-side
+    # debugging, never from outside the VPS. The nginx proxy talks to the
+    # frontend over the internal Docker network, not this mapping.
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_HOST:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
     environment:
       # Runtime /api proxy target. The Vite bundle is built WITHOUT an API URL
       # (VITE_API_URL is build-time-only and cannot be changed after build);
@@ -29,18 +54,31 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      # node:20-slim ships neither curl nor wget; use the built-in fetch API.
+      # Checks the local static server only (no backend round-trip).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
     networks:
       - predictiq-network
 
   backend:
     build:
-      context: .
+      context: ..
       dockerfile: deploy/Dockerfile.backend
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      # Loopback-only: for host-side API checks during local demos. In
+      # production the nginx proxy forwards /api/* to backend over the
+      # internal Docker network (http://backend:8000); nothing needs to
+      # reach the backend from outside the host.
+      - "${BACKEND_HOST:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     environment:
-      # Database connection - required
-      DATABASE_URL: "${DATABASE_URL}"
+      # Database connection - required (or assembled from DB_* variables,
+      # which the backend supports for local development only).
+      DATABASE_URL: "${DATABASE_URL:-}"
       # libpq sslmode: the local compose PostgreSQL runs WITHOUT TLS, so this
       # must be "disable" for the local stack. Managed/remote databases should
       # override to "require" in their own environment. Never silently weaken
@@ -48,9 +86,14 @@ services:
       DB_SSLMODE: "${DB_SSLMODE:-disable}"
       # Application settings
       APP_ENV: "${APP_ENV:-production}"
-      # Device API key for write-gate authentication (optional in dev)
+      # Device API key for write-gate authentication.
+      # REQUIRED in production: deploy/entrypoint.sh refuses to start the
+      # backend when APP_ENV=production and this is unset/placeholder, and
+      # every mutating endpoint is rejected with 401/403 when it is empty.
       DEVICE_API_KEY: "${DEVICE_API_KEY:-}"
-      # CORS origins - comma-separated list (empty = no browser CORS)
+      # CORS origins - comma-separated list (empty = no browser CORS).
+      # Production: set to your public HTTPS origin(s), e.g.
+      #   CORS_ORIGINS=https://predictiq.example.com
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}"
     depends_on:
       database:
@@ -67,11 +110,15 @@ services:
 
   database:
     image: postgres:16-alpine
-    ports:
-      - "${DB_PORT:-5432}:5432"
+    # PostgreSQL is deliberately NOT exposed to the host. All access happens
+    # over the internal Docker network (hostname "database"). For one-off
+    # debugging use:
+    #   docker compose --env-file deploy/.env -f deploy/docker-compose.yml exec database psql -U predictiq
     environment:
       POSTGRES_USER: "${DB_USER:-predictiq}"
-      POSTGRES_PASSWORD: "${DB_PASSWORD:-changeme_in_production}"
+      # No default password: deployment fails fast if DB_PASSWORD is not set
+      # in deploy/.env. Never commit real credentials.
+      POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD must be set in deploy/.env}"
       POSTGRES_DB: "${DB_NAME:-predictiq}"
     volumes:
       # Persistent database storage
@@ -82,6 +129,42 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - predictiq-network
+
+  proxy:
+    image: nginx:1.27-alpine
+    # Optional TLS-terminating reverse proxy (deploy/TLS_SETUP.md Option A).
+    # Enabled only with: docker compose ... --profile proxy up -d
+    profiles: ["proxy"]
+    ports:
+      - "${PROXY_HTTP_PORT:-80}:80"
+      - "${PROXY_HTTPS_PORT:-443}:443"
+    environment:
+      # Substituted into deploy/nginx/predictiq.conf.template by the nginx
+      # image's envsubst bootstrap at container start.
+      SERVER_NAME: "${SERVER_NAME:-_}"
+    volumes:
+      # Config template (rendered to /etc/nginx/conf.d/predictiq.conf).
+      - ./nginx/predictiq.conf.template:/etc/nginx/templates/predictiq.conf.template:ro
+      # TLS material: fullchain.pem + privkey.pem (gitignored; see README).
+      - ./nginx/certs:/etc/nginx/certs:ro
+      # Optional: webroot for Let's Encrypt renewals without downtime
+      # (see deploy/README.md "Certificate renewal").
+      # - ./nginx/certbot-webroot:/var/www/certbot
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # Dedicated /nginx-health location in predictiq.conf.template.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/nginx-health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
     networks:
       - predictiq-network
 
