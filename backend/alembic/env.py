@@ -8,8 +8,63 @@ import os
 import sys
 from dotenv import load_dotenv
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import (
+    Column,
+    MetaData,
+    PrimaryKeyConstraint,
+    String,
+    Table,
+    engine_from_config,
+    inspect,
+    pool,
+    text,
+)
 from alembic import context
+from alembic.ddl.postgresql import PostgresqlImpl
+
+
+class PredictIQPostgresqlImpl(PostgresqlImpl):
+    __dialect__ = "postgresql"
+
+    def version_table_impl(
+        self,
+        *,
+        version_table: str,
+        version_table_schema: str | None,
+        version_table_pk: bool,
+        **kw: object,
+    ) -> Table:
+        if not self.as_sql and self.connection is not None:
+            inspector = inspect(self.connection)
+            if inspector.has_table(version_table, schema=version_table_schema):
+                version_column = next(
+                    column
+                    for column in inspector.get_columns(
+                        version_table, schema=version_table_schema
+                    )
+                    if column["name"] == "version_num"
+                )
+                if getattr(version_column["type"], "length", None) < 255:
+                    self.connection.execute(
+                        text(
+                            "ALTER TABLE alembic_version "
+                            "ALTER COLUMN version_num TYPE VARCHAR(255)"
+                        )
+                    )
+
+        version_table_obj = Table(
+            version_table,
+            MetaData(),
+            Column("version_num", String(255), nullable=False),
+            schema=version_table_schema,
+        )
+        if version_table_pk:
+            version_table_obj.append_constraint(
+                PrimaryKeyConstraint(
+                    "version_num", name=f"{version_table}_pkc"
+                )
+            )
+        return version_table_obj
 
 # Ensure current working directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
