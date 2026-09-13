@@ -11,9 +11,10 @@ This directory holds the complete deployment configuration for the PredictIQ V1 
 | docker-compose.yml | Implemented — complete stack: frontend + backend + database |
 | Backend service | Real FastAPI image with Alembic migrations |
 | Database service | PostgreSQL 16 with persistent volume |
-| Healthchecks | Backend `/api/ready`, database `pg_isready` |
+| Healthchecks | Backend `/api/ready`, frontend node fetch, database `pg_isready`, nginx `/nginx-health` |
 | Environment template | `deploy/.env.example` with all required variables |
-| TLS / Reverse Proxy | Not configured — see TLS_SETUP.md |
+| TLS / Reverse Proxy | nginx service (profile `proxy`) — see TLS_SETUP.md |
+| Production hardening | DB not host-exposed; loopback-only app ports; entrypoint production guards |
 | Deployment verification | **PENDING** live infrastructure |
 
 ## Architecture
@@ -196,42 +197,42 @@ healthcheck:
 
 - Docker and Docker Compose installed
 - Git repository cloned
-- Environment variables configured in `.env`
+- Environment variables configured in `deploy/.env`
 
 ### Quick Start
 
 ```bash
 # 1. Copy environment template
-cp deploy/.env.example .env
+cp deploy/.env.example deploy/.env
 
-# 2. Edit .env with your values (especially passwords!)
+# 2. Edit deploy/.env with your values (especially passwords!)
 
 # 3. Build and start all services
-docker compose -f deploy/docker-compose.yml up --build -d
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up --build -d
 
 # 4. Check service status
-docker compose -f deploy/docker-compose.yml ps
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml ps
 
 # 5. View logs
-docker compose -f deploy/docker-compose.yml logs -f
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs -f
 ```
 
 ### Step-by-Step
 
 ```bash
 # Build images
-docker compose -f deploy/docker-compose.yml build
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml build
 
 # Start services in background
-docker compose -f deploy/docker-compose.yml up -d
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 
 # Wait for services to be healthy (migrations take ~10-30 seconds)
 sleep 30
 
 # Verify all services are running
-docker compose -f deploy/docker-compose.yml ps
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml ps
 
-# Check backend health
+# Check backend health (loopback mapping, host only)
 curl http://localhost:8000/api/health
 
 # Check backend readiness (should return 200 after DB is ready)
@@ -240,6 +241,64 @@ curl http://localhost:8000/api/ready
 # Access the frontend dashboard
 # Open http://localhost:3000 in your browser
 ```
+
+### Production Server Deployment Procedure (always-on VPS)
+
+This is the exact procedure for an internet-facing, always-on server with TLS.
+Prerequisites: a VPS with Docker + Compose v2+ (`docker compose version`), a
+domain with an A/AAAA record pointing at the VPS IP, ports 22/80/443 open, and
+the repository cloned on the server.
+
+```bash
+# 0. Firewall: allow only SSH, HTTP, HTTPS (PostgreSQL is never exposed).
+#    Example with ufw:
+sudo ufw allow OpenSSH && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw enable
+
+# 1. Environment: copy the template and fill in REAL values.
+cp deploy/.env.example deploy/.env
+cat > /dev/null <<'NOTE'
+Required edits in deploy/.env:
+  DB_PASSWORD    -> strong password   python -c "import secrets; print(secrets.token_urlsafe(24))"
+  DEVICE_API_KEY -> strong key (>=24 chars, enforced by entrypoint)
+  CORS_ORIGINS   -> https://your-domain
+  SERVER_NAME    -> your-domain
+NOTE
+
+# 2. TLS certificate (Let's Encrypt; DNS must already point at this server).
+sudo apt-get install -y certbot          # or your distro equivalent
+sudo certbot certonly --standalone -d your-domain        # port 80 must be free
+mkdir -p deploy/nginx/certs
+sudo cp /etc/letsencrypt/live/your-domain/fullchain.pem deploy/nginx/certs/
+sudo cp /etc/letsencrypt/live/your-domain/privkey.pem  deploy/nginx/certs/
+sudo chown "$USER" deploy/nginx/certs/*.pem
+
+# 3. Bring the stack up WITH the TLS proxy profile.
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile proxy up --build -d
+
+# 4. Verify.
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile proxy ps   # all Up (healthy)
+curl -fsS https://your-domain/api/ready                 # {"status": "ready", ...}
+curl -fsSI http://your-domain/ | head -1                # 301 -> https
+curl -fsSI https://your-domain/ | grep -i strict         # HSTS header present
+```
+
+Post-deploy checks and renewal:
+
+```bash
+# Certificate renewal without downtime (webroot; nginx keeps serving).
+# Uncomment the certbot-webroot volume in docker-compose.yml proxy service,
+# mount /etc/letsencrypt into a certbot container or run certbot on the host:
+sudo certbot renew --deploy-hook "docker compose --env-file deploy/.env -f deploy/docker-compose.yml restart proxy"
+
+# Follow logs
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs -f proxy backend
+```
+
+Host-exposure contract (production): only nginx publishes 80/443. PostgreSQL
+has **no host port at all**, and frontend/backend publish loopback-only
+mappings purely for host-side debugging. Application reachability from the
+internet is exclusively: browser/device → nginx(443) → frontend/backend →
+database, all proxy hops over the internal Docker network.
 
 ### Using the Already-Built Frontend
 
@@ -337,20 +396,19 @@ Secrets like `DATABASE_URL`, `DEVICE_API_KEY`, and `DB_PASSWORD` remain on the b
 
 ## TLS Configuration
 
-TLS termination is **NOT configured** in the current skeleton.
+TLS termination is implemented as a **profile-gated nginx service** in
+docker-compose.yml (profile `proxy`), per TLS_SETUP.md Option A:
 
-See `TLS_SETUP.md` for:
-- Production TLS options (reverse proxy, cloud load balancer)
-- Certificate acquisition (Let's Encrypt, cloud providers)
-- Required configuration changes
-- Verification checklist
+- `deploy/nginx/predictiq.conf.template` — rendered at container start
+  (envsubst): HTTP→HTTPS redirect, TLS termination, HSTS, `location /` →
+  frontend:3000, `location /api/` → backend:8000.
+- `deploy/nginx/certs/` (gitignored) holds `fullchain.pem` + `privkey.pem`.
+- Enabled only with `--profile proxy`; see the "Production Server Deployment
+  Procedure (always-on VPS)" section above for the exact sequence.
 
-**TLS is deployment-environment dependent and requires:**
-- A real domain name
-- Valid TLS certificates
-- Reverse proxy or load balancer configuration
-
-Do not claim TLS is configured without completing the verification checklist in TLS_SETUP.md.
+Certificates, the domain, and DNS remain deployment-environment specific —
+complete the verification checklist in TLS_SETUP.md before claiming TLS is
+deployed.
 
 ## Demo Scenarios
 
@@ -704,12 +762,13 @@ If hardware is not available, this scenario is documented but not executable.
 
 Before deploying to production:
 
-- [ ] All environment variables configured with real values
+- [ ] All environment variables configured with real values (deploy/.env)
 - [ ] Database password changed from placeholder
-- [ ] DEVICE_API_KEY set to strong random value
-- [ ] CORS_ORIGINS set to production frontend URLs
-- [ ] VITE_API_URL set to production URL (with HTTPS if TLS configured)
-- [ ] TLS configured (see TLS_SETUP.md) if exposing to internet
+- [ ] DEVICE_API_KEY set to strong random value (entrypoint enforces in production)
+- [ ] CORS_ORIGINS set to production frontend URLs (https://...)
+- [ ] SERVER_NAME set to the public domain (nginx profile)
+- [ ] TLS certificates in deploy/nginx/certs/ (gitignored) if exposing to internet
+- [ ] Stack started with --profile proxy
 - [ ] Database backups configured
 - [ ] Log aggregation configured (optional)
 - [ ] Monitoring/alerts for container health (optional)
@@ -755,9 +814,11 @@ docker compose -f deploy/docker-compose.yml up -d
 2. **Rotate credentials** before first deployment
 3. **Use strong passwords** for database
 4. **Restrict CORS** to your actual frontend domains
-5. **Enable write-gate** with DEVICE_API_KEY in production
-6. **TLS required** for any internet-facing deployment
+5. **Write gate is mandatory in production** — APP_ENV=production refuses to start without a strong DEVICE_API_KEY (deploy/entrypoint.sh)
+6. **TLS required** for any internet-facing deployment (--profile proxy; TLS_SETUP.md)
 7. **No secrets in Docker images** — all via environment variables
+8. **PostgreSQL is never exposed to the host** — internal Docker network only
+9. **TLS private keys live outside Git** — deploy/nginx/certs/ is gitignored
 
 ## Troubleshooting
 
