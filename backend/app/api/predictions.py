@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from backend.app.core.auth import require_api_key
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, Prediction
 from backend.app.schemas.sensor import (
@@ -70,7 +71,8 @@ def get_model_evaluation(db: Session = Depends(get_db)) -> ModelEvaluationRespon
     return ModelEvaluationResponse(**payload)
 
 
-@router.post("/train-model", response_model=ModelTrainResponse)
+@router.post("/train-model", response_model=ModelTrainResponse,
+             dependencies=[Depends(require_api_key)])
 def train_governed_ml_model(payload: ModelTrainRequest, db: Session = Depends(get_db)) -> ModelTrainResponse:
     """Explicit, governed training on curated technician labels only (ADR-005).
 
@@ -112,7 +114,8 @@ def train_governed_ml_model(payload: ModelTrainRequest, db: Session = Depends(ge
     )
 
 
-@router.post("/predict", response_model=PredictionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/predict", response_model=PredictionResponse, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_api_key)])
 def execute_prediction(payload: PredictionInput, db: Session = Depends(get_db)) -> PredictionResponse:
     machine = db.query(Machine).filter(Machine.machine_id == payload.machine_id).first()
     if not machine:

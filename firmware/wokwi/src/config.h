@@ -8,7 +8,14 @@
 #define WIFI_PASSWORD ""
 
 // Replace with a publicly reachable FastAPI URL or tunnel URL. Do not use localhost.
-#define API_BASE_URL "https://profession-thorough-rear-firewall.trycloudflare.com"
+#define API_BASE_URL "http://localhost:8000"  // Set to a reachable FastAPI URL; do NOT use dead tunnel URLs
+
+// Write-gate credential (DEVICE_API_KEY configured on the backend). Sent as the
+// 'X-API-Key' header on every POST. Leave empty ONLY when the backend has no
+// DEVICE_API_KEY configured (gate disabled with a startup warning).
+#ifndef DEVICE_API_KEY
+#define DEVICE_API_KEY ""
+#endif
 
 #define DEVICE_ID "ESP32_001"
 #define MACHINE_ID "M001"

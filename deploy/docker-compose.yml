@@ -12,7 +12,6 @@
 #
 # Network: services communicate on an internal Docker network.
 # The frontend reaches the backend via the service name "backend" on port 8000.
-version: "3.8"
 
 services:
   frontend:
@@ -22,9 +21,10 @@ services:
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
-      # Frontend API URL - must point to the backend service
-      # In production, this should be the public URL or reverse proxy address
-      VITE_API_URL: "${VITE_API_URL:-http://localhost:8000}"
+      # Runtime /api proxy target. The Vite bundle is built WITHOUT an API URL
+      # (VITE_API_URL is build-time-only and cannot be changed after build);
+      # the Node server proxies same-origin /api requests to this origin.
+      BACKEND_ORIGIN: "http://backend:8000"
     depends_on:
       backend:
         condition: service_healthy
@@ -41,6 +41,11 @@ services:
     environment:
       # Database connection - required
       DATABASE_URL: "${DATABASE_URL}"
+      # libpq sslmode: the local compose PostgreSQL runs WITHOUT TLS, so this
+      # must be "disable" for the local stack. Managed/remote databases should
+      # override to "require" in their own environment. Never silently weaken
+      # a production connection: the backend default (config.py) is "require".
+      DB_SSLMODE: "${DB_SSLMODE:-disable}"
       # Application settings
       APP_ENV: "${APP_ENV:-production}"
       # Device API key for write-gate authentication (optional in dev)

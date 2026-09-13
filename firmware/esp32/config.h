@@ -20,6 +20,12 @@
 // Example for cloud host:    "https://predictiq.yourdomain.com"
 #define API_BASE_URL              "http://192.168.1.100:8000"
 
+// Write-gate credential (DEVICE_API_KEY configured on the backend). Sent as
+// the 'X-API-Key' header on every POST. Leave empty ONLY for a backend whose
+// DEVICE_API_KEY is unset (gate disabled with a startup warning); a deployed
+// gated backend rejects unauthenticated writes with HTTP 401/403.
+#define DEVICE_API_KEY            ""
+
 // Hardware & Asset Identification
 #define DEVICE_ID                 "ESP32_001"
 #define MACHINE_ID                "M001"
@@ -48,5 +54,15 @@
 // #define PIN_VIB_ANALOG         34  // Analog Piezo / MPU6050 I2C (SDA=21, SCL=22)
 // #define PIN_CURRENT_ADC        35  // ACS712 / SCT-013 CT Analog Input
 // #define PIN_RPM_INTERRUPT      18  // Optical / Hall-Effect Sensor Interrupt Pin
+
+// =============================================================================
+// WRITE-GATE API KEY (X-API-Key header)
+// =============================================================================
+// Set via build flag or by editing the DEVICE_API_KEY define above. Never
+// commit a real key. Example build flag in platformio.ini:
+//   -D DEVICE_API_KEY="\"your-real-key\""
+#ifndef DEVICE_API_KEY
+#define DEVICE_API_KEY ""
+#endif
 
 #endif // PREDICT_IQ_CONFIG_H

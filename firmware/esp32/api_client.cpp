@@ -28,6 +28,12 @@ bool sendHeartbeat(const TelemetrySnapshot& snapshot) {
     http.begin(endpoint);
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
+#ifdef DEVICE_API_KEY
+    // Write-gate: backend rejects unauthenticated writes with 401/403.
+    if (strlen(DEVICE_API_KEY) > 0) {
+        http.addHeader("X-API-Key", DEVICE_API_KEY);
+    }
+#endif
 
     // Build JSON Heartbeat Payload
     StaticJsonDocument<384> doc;
@@ -96,6 +102,12 @@ bool sendSensorTelemetry(const TelemetrySnapshot& snapshot) {
     http.begin(endpoint);
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
+#ifdef DEVICE_API_KEY
+    // Write-gate: backend rejects unauthenticated writes with 401/403.
+    if (strlen(DEVICE_API_KEY) > 0) {
+        http.addHeader("X-API-Key", DEVICE_API_KEY);
+    }
+#endif
 
     // Build JSON Telemetry Payload with ONLY genuine numeric readings
     StaticJsonDocument<384> doc;

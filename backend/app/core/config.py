@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     db_name: str = ""
     db_user: str = ""
     db_password: str = ""
+    # libpq sslmode: "require" protects remote/managed databases (production
+    # default); local docker-compose PostgreSQL has no TLS and must explicitly
+    # set DB_SSLMODE=disable in deploy/.env. Never silently weaken production.
+    db_sslmode: str = "require"
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_recycle: int = 1800

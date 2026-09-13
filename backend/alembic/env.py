@@ -26,7 +26,7 @@ from backend.app.db.database import Base, DATABASE_URL
 import backend.app.db.models  # Ensure models are imported
 target_metadata = Base.metadata
 
-# Reuse the verified Supabase connection configuration without duplicating credentials.
+# Reuse the verified PostgreSQL connection configuration without duplicating credentials.
 config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
 
 def run_migrations_offline() -> None:

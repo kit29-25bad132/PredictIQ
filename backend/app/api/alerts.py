@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timezone
 
+from backend.app.core.auth import require_api_key
 from backend.app.db.database import get_db
 from backend.app.db.models import Alert, Machine
 from backend.app.schemas.sensor import AlertResponse
@@ -32,7 +33,8 @@ def get_alerts(
     alerts = query.order_by(Alert.created_at.desc()).all()
     return [AlertResponse.from_orm(a) for a in alerts]
 
-@router.post("/alerts/{alert_id}/acknowledge", response_model=AlertResponse, summary="Acknowledge an active alert")
+@router.post("/alerts/{alert_id}/acknowledge", response_model=AlertResponse,
+             summary="Acknowledge an active alert", dependencies=[Depends(require_api_key)])
 def acknowledge_alert(alert_id: int, db: Session = Depends(get_db)):
     """
     Marks an alert as ACKNOWLEDGED in PostgreSQL.
@@ -48,7 +50,8 @@ def acknowledge_alert(alert_id: int, db: Session = Depends(get_db)):
     db.refresh(alert)
     return AlertResponse.from_orm(alert)
 
-@router.post("/alerts/{alert_id}/resolve", response_model=AlertResponse, summary="Resolve an alert")
+@router.post("/alerts/{alert_id}/resolve", response_model=AlertResponse,
+             summary="Resolve an alert", dependencies=[Depends(require_api_key)])
 def resolve_alert(alert_id: int, db: Session = Depends(get_db)):
     """
     Marks an alert as RESOLVED in PostgreSQL.

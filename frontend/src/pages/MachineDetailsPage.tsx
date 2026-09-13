@@ -288,7 +288,7 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
                 <Sparkles className="h-4 w-4" />
               </span>
               <h3 className="text-lg font-bold text-white">
-                Predictive AI Diagnostics & RUL Status
+                Predictive AI Diagnostics
               </h3>
             </div>
             <p className="text-xs text-slate-400 mt-1">

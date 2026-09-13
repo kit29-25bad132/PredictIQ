@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
+from backend.app.core.auth import require_api_key
 from backend.app.db.database import get_db
 from backend.app.db.models import FeedbackRecord, Machine, Prediction, Alert, MaintenanceRecord
 from backend.app.schemas.sensor import FeedbackCreate, FeedbackResponse, FeedbackListEntry
@@ -63,7 +64,8 @@ def get_machine_feedback(machine_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/feedback", response_model=FeedbackResponse, status_code=status.HTTP_201_CREATED,
-             summary="Record technician feedback / ground-truth outcome")
+             summary="Record technician feedback / ground-truth outcome",
+             dependencies=[Depends(require_api_key)])
 def create_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)):
     """
     Persist an authentic technician-observed outcome and link it to a machine,

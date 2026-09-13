@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 
+from backend.app.core.auth import require_api_key
 from backend.app.core.config import get_settings
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, Device, SensorReading, Alert
@@ -44,7 +45,8 @@ def get_device_computed_status(last_seen: Optional[datetime]) -> str:
     "/sensor-data",
     response_model=SensorDataResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Ingest real-time IoT sensor readings from ESP32"
+    summary="Ingest real-time IoT sensor readings from ESP32",
+    dependencies=[Depends(require_api_key)],
 )
 def ingest_sensor_data(payload: SensorDataInput, db: Session = Depends(get_db)):
     """

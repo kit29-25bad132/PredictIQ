@@ -48,9 +48,10 @@ export const SettingsPage: React.FC = () => {
 
   const sampleSensorCurl = `curl -X POST http://localhost:8000/api/sensor-data \\
   -H "Content-Type: application/json" \\
+  -H "X-API-Key: <DEVICE_API_KEY>" \\
   -d '{
     "device_id": "ESP32_001",
-    "machine_id": "M001",
+    "machine_id": "<MACHINE_ID>",
     "timestamp": "${new Date().toISOString()}",
     "temperature": 72.4,
     "vibration": 3.8,
@@ -61,9 +62,10 @@ export const SettingsPage: React.FC = () => {
 
   const sampleHeartbeatCurl = `curl -X POST http://localhost:8000/api/devices/heartbeat \\
   -H "Content-Type: application/json" \\
+  -H "X-API-Key: <DEVICE_API_KEY>" \\
   -d '{
     "device_id": "ESP32_001",
-    "machine_id": "M001",
+    "machine_id": "<MACHINE_ID>",
     "firmware_version": "1.0.0",
     "temperature_status": "NOT_CONFIGURED",
     "vibration_status": "NOT_CONFIGURED",
@@ -73,9 +75,10 @@ export const SettingsPage: React.FC = () => {
 
   const sampleRegisterDeviceCurl = `curl -X POST http://localhost:8000/api/devices \\
   -H "Content-Type: application/json" \\
+  -H "X-API-Key: <DEVICE_API_KEY>" \\
   -d '{
     "device_id": "ESP32_001",
-    "machine_id": "M001",
+    "machine_id": "<MACHINE_ID>",
     "device_type": "ESP32",
     "firmware_version": "1.0.0"
   }'`;

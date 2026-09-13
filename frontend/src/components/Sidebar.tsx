@@ -144,7 +144,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             </div>
             <p className="text-[10px] font-mono tracking-tight text-slate-400">
-              INDUSTRIAL AI ENGINE v2.4
+              Physics-Rule Prototype v1
             </p>
           </div>
         </div>

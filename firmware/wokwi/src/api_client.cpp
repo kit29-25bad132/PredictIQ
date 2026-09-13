@@ -55,6 +55,12 @@ bool sendHeartbeat() {
     }
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
+#ifdef DEVICE_API_KEY
+    // Write-gate: backend rejects unauthenticated writes with 401/403.
+    if (strlen(DEVICE_API_KEY) > 0) {
+        http.addHeader("X-API-Key", DEVICE_API_KEY);
+    }
+#endif
 
     JsonDocument payload;
     payload["device_id"] = DEVICE_ID;
@@ -99,6 +105,12 @@ bool sendTelemetry(const SensorReading& temperature, const SensorReading& vibrat
     }
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
+#ifdef DEVICE_API_KEY
+    // Write-gate: backend rejects unauthenticated writes with 401/403.
+    if (strlen(DEVICE_API_KEY) > 0) {
+        http.addHeader("X-API-Key", DEVICE_API_KEY);
+    }
+#endif
 
     JsonDocument payload;
     payload["device_id"] = DEVICE_ID;

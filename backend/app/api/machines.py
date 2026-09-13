@@ -9,6 +9,7 @@ from sqlalchemy import desc
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 
+from backend.app.core.auth import require_api_key
 from backend.app.core.config import get_settings
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, Device, SensorReading
@@ -150,7 +151,8 @@ def get_machine(machine_id: str, db: Session = Depends(get_db)):
         latest_reading=SensorReadingResponse.from_orm(latest_reading) if latest_reading else None
     )
 
-@router.post("/machines", response_model=MachineResponse, status_code=status.HTTP_201_CREATED, summary="Register a new machine asset")
+@router.post("/machines", response_model=MachineResponse, status_code=status.HTTP_201_CREATED, summary="Register a new machine asset",
+             dependencies=[Depends(require_api_key)])
 def create_machine(data: MachineCreate, db: Session = Depends(get_db)):
     """
     Registers a new industrial machine asset in PostgreSQL.
@@ -220,7 +222,8 @@ def list_devices(db: Session = Depends(get_db)):
         for d in devices
     ]
 
-@router.post("/devices", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED, summary="Register an ESP32 hardware device to a machine")
+@router.post("/devices", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED, summary="Register an ESP32 hardware device to a machine",
+             dependencies=[Depends(require_api_key)])
 def register_device(payload: DeviceCreate, db: Session = Depends(get_db)):
     """
     Registers an ESP32 IoT node to a target machine in PostgreSQL.
@@ -328,7 +331,8 @@ def get_device_status(device_id: str, db: Session = Depends(get_db)):
 @router.post(
     "/devices/heartbeat",
     response_model=DeviceHeartbeatResponse,
-    summary="Acknowledge ESP32 device heartbeat and update last_seen"
+    summary="Acknowledge ESP32 device heartbeat and update last_seen",
+    dependencies=[Depends(require_api_key)],
 )
 def record_device_heartbeat(payload: DeviceHeartbeatInput, db: Session = Depends(get_db)):
     """

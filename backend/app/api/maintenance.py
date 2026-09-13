@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timezone
 
+from backend.app.core.auth import require_api_key
 from backend.app.db.database import get_db
 from backend.app.db.models import MaintenanceRecord, Machine
 from backend.app.schemas.sensor import MaintenanceCreate, MaintenanceResponse
@@ -32,7 +33,8 @@ def list_maintenance_records(
     "/maintenance",
     response_model=MaintenanceResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Log a new maintenance action or ground-truth failure record"
+    summary="Log a new maintenance action or ground-truth failure record",
+    dependencies=[Depends(require_api_key)],
 )
 def create_maintenance(payload: MaintenanceCreate, db: Session = Depends(get_db)):
     """

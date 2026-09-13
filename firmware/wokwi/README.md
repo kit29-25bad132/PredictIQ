@@ -3,7 +3,7 @@
 This directory is a standalone Wokwi simulation for the Predict IQ telemetry path:
 
 ```text
-Wokwi sensors -> ESP32-S3 -> Wi-Fi -> FastAPI /api/sensor-data -> Supabase PostgreSQL
+Wokwi sensors -> ESP32-S3 -> Wi-Fi -> FastAPI /api/sensor-data -> PostgreSQL
 ```
 
 The simulation uses sensor components and their measured outputs only. It does not generate random values, seed the database, contain database credentials, or implement predictions.
@@ -44,7 +44,7 @@ Wokwi cannot use `localhost` to reach a FastAPI process on the development machi
 #define API_BASE_URL "https://your-public-fastapi-tunnel.example.com"
 ```
 
-The firmware appends `/api/sensor-data`. Do not put the Supabase URL, database username, database password, or Supabase service key in this project. FastAPI is the only database client.
+The firmware appends `/api/sensor-data`. Do not put database credentials or API keys in this project. FastAPI is the only database client.
 
 Wokwi Wi-Fi is configured as:
 

@@ -58,7 +58,13 @@ export interface SensorReading {
 export interface ContributingFactor {
   factor: 'Temperature' | 'Vibration' | 'Current' | 'RPM' | 'Thermal Drift' | string;
   impact: 'Critical' | 'Very High' | 'High' | 'Above Normal' | 'Normal' | 'Low' | string;
-  shap_value: number; // relative attribution
+  /**
+   * Legacy API field name (kept for contract compatibility). Semantics:
+   * a genuine SHAP attribution when a governed trained model exists; otherwise
+   * a normalized physics-heuristic attribution from the prototype engine —
+   * NOT a SHAP value. See ml/explainability.py.
+   */
+  shap_value: number;
   value_observed: string;
   threshold_reference: string;
   description: string;

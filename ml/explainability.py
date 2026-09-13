@@ -1,6 +1,19 @@
 """
 Predict IQ - Explainable AI (XAI) Engine with SHAP
 Computes feature attributions and transparent technician explanations from real sensor data and trained models.
+
+SEMANTICS OF ``shap_value`` (honest naming, kept for API compatibility):
+
+- When a governed model exists and the optional ``shap`` package is installed,
+  this value IS a genuine SHAP attribution from shap.TreeExplainer.
+- In the default V1 state (physics-rule prototype, model_version="physics-rule-v1")
+  there is no trained model, so this value is a NORMALIZED PHYSICS-HEURISTIC
+  attribution (each channel's threshold-exceedance share, summing to ~1.0).
+  It is NOT a SHAP value in the machine-learning sense.
+
+The field name is preserved so the public API/contract does not break; the UI
+renders it as "Attribution" (ShapAttributionBar). Do not present it as model
+explanation evidence unless a governed model produced it.
 """
 
 from typing import List, Dict, Any, Tuple, Optional

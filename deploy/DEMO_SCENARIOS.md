@@ -5,6 +5,33 @@ This document details the six locked demo scenarios from `docs/V1-MIGRATION-PLAN
 **Important:** Demo scenarios must pass **without manually editing database records**.
 Use the API and UI to drive all state changes.
 
+## Authentication Prerequisite
+
+Every mutating (POST) endpoint is protected by the API-key write gate. Before
+running these scenarios, export the key configured in `deploy/.env`:
+
+```bash
+export PREDICTIQ_API_KEY="<value of DEVICE_API_KEY from deploy/.env>"
+```
+
+Negative authentication checks (should FAIL):
+
+```bash
+# No key -> expect 401 Unauthorized
+curl -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8000/api/machines \
+  -H "Content-Type: application/json" -d '{}'
+
+# Wrong key -> expect 403 Forbidden
+curl -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8000/api/machines \
+  -H "Content-Type: application/json" -H "X-API-Key: wrong-key" -d '{}'
+```
+
+Read endpoints (GET) stay public so the dashboard works without credentials.
+
+Known limitation (documented, not solved): possession of the single shared key
+allows writing telemetry for ANY device_id — per-device credentials/ownership
+is out of V1 scope (see docs/09 and `backend/app/core/auth.py`).
+
 ---
 
 ## Scenario 1: Normal Operation
@@ -29,6 +56,7 @@ Verify the basic telemetry pipeline works end-to-end: device → ingest → stor
 ```bash
 curl -X POST http://localhost:8000/api/machines \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "machine_id": "MOTOR-001",
     "name": "Main Drive Motor",
@@ -53,6 +81,7 @@ curl -X POST http://localhost:8000/api/machines \
 ```bash
 curl -X POST http://localhost:8000/api/devices \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "device_id": "PIQ-ESP32-001",
     "machine_id": "MOTOR-001",
@@ -71,6 +100,7 @@ curl -X POST http://localhost:8000/api/devices \
 ```bash
 curl -X POST http://localhost:8000/api/sensor-data \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "device_id": "PIQ-ESP32-001",
     "machine_id": "MOTOR-001",
@@ -167,6 +197,7 @@ Verify the health engine detects degrading conditions and creates appropriate al
 ```bash
 curl -X POST http://localhost:8000/api/sensor-data \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "device_id": "PIQ-ESP32-001",
     "machine_id": "MOTOR-001",
@@ -197,6 +228,7 @@ curl -X POST http://localhost:8000/api/sensor-data \
 ```bash
 curl -X POST http://localhost:8000/api/sensor-data \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "device_id": "PIQ-ESP32-001",
     "machine_id": "MOTOR-001",
@@ -283,6 +315,7 @@ Verify the system escalates from warning to critical and generates predictions.
 ```bash
 curl -X POST http://localhost:8000/api/sensor-data \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "device_id": "PIQ-ESP32-001",
     "machine_id": "MOTOR-001",
@@ -315,6 +348,7 @@ curl -X POST http://localhost:8000/api/sensor-data \
 ```bash
 curl -X POST http://localhost:8000/api/predict \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "machine_id": "MOTOR-001",
     "temperature": 110.0,
@@ -449,6 +483,7 @@ curl http://localhost:8000/api/data-status
 ```bash
 curl -X POST http://localhost:8000/api/devices/heartbeat \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "device_id": "PIQ-ESP32-001",
     "machine_id": "MOTOR-001",
@@ -517,6 +552,7 @@ Verify the complete feedback/ground-truth loop: alert → inspection → mainten
 ```bash
 curl -X POST http://localhost:8000/api/maintenance \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "machine_id": "MOTOR-001",
     "component": "Drive-end Bearing",
@@ -539,6 +575,7 @@ curl -X POST http://localhost:8000/api/maintenance \
 ```bash
 curl -X POST http://localhost:8000/api/feedback \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $PREDICTIQ_API_KEY" \
   -d '{
     "machine_id": "MOTOR-001",
     "prediction_id": 1,

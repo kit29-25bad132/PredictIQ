@@ -35,6 +35,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY ml/ ./ml/
 
+# Alembic migration assets MUST live at /app for `alembic upgrade head` to
+# resolve script_location=alembic (relative to the working directory).
+# alembic/env.py imports backend.app.db.*, which resolves because backend/ is
+# copied as a package directory under /app (PYTHONPATH includes the workdir).
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/alembic ./alembic
+
+# Allow compile-time verification of migrations inside the image
+# (docker build ... --build-arg VERIFY_MIGRATIONS=true). Off by default so
+# production builds do not require a live database.
+ARG VERIFY_MIGRATIONS=false
+RUN if [ "$VERIFY_MIGRATIONS" = "true" ]; then \
+        python -c "import alembic, sqlalchemy, fastapi; print('migration toolchain OK')"; \
+    fi
+
 # Make the entrypoint executable
 COPY deploy/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -51,6 +66,10 @@ ENV PYTHONUNBUFFERED=1 \
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; \
     urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)" || exit 1
+
+# Prove at build time that the app path is importable from the container layout:
+# this catches regressions like a missing package __init__ or wrong module path.
+RUN python -c "import backend.app.main; print('backend.app.main:app importable from /app')"
 
 # Run migrations then start the application
 ENTRYPOINT ["/entrypoint.sh"]

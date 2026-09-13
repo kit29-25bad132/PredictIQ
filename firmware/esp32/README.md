@@ -7,8 +7,11 @@ nodes. Posts telemetry to the FastAPI backend with `source: "REAL_HARDWARE"`.
 
 - **SENSOR_SOURCE** is `"REAL_HARDWARE"` (was incorrectly `"WOKWI"` in the V0
   esp32 skeleton — this fixes the V0 mislabel).
-- **DEVICE_API_KEY** removed (dead token config — security cleanup). The API
-  client now sends only `Content-Type: application/json`.
+- **DEVICE_API_KEY** is the write-gate credential sent as the `X-API-Key`
+  header on telemetry and heartbeat POSTs. Keep it empty only for a backend
+  with no key configured (gate disabled); set it to match the backend's
+  `DEVICE_API_KEY` for any gated deployment. Never commit a real key — set it
+  per-device via a PlatformIO build flag or by editing `config.h` locally.
 - Sensor drivers retain the honest `NOT_CONFIGURED` placeholder behavior: when
   no sensor is wired, the firmware reports `NOT_CONFIGURED` with no numeric
   fabrication and falls back to heartbeat-only posts.

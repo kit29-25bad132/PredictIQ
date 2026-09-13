@@ -68,6 +68,10 @@ Copy `deploy/.env.example` to `.env` and configure:
 # PostgreSQL connection for backend
 DATABASE_URL=postgresql+psycopg://predictiq:CHANGE_ME_PASSWORD@database:5432/predictiq
 
+# libpq sslmode: the local compose PostgreSQL has no TLS -> "disable".
+# Managed/remote production databases should use "require" (backend default).
+DB_SSLMODE=disable
+
 # Or individual settings (used if DATABASE_URL is empty)
 DB_USER=predictiq
 DB_PASSWORD=CHANGE_ME_PASSWORD
@@ -85,12 +89,18 @@ FRONTEND_PORT=3000
 
 ### Frontend API Configuration
 
+The frontend uses a RUNTIME /api reverse proxy (VITE_API_URL is build-time-only
+and cannot be changed after the bundle is built — see "Frontend ↔ Backend
+Connection" below):
+
 ```bash
-# URL the frontend uses to reach the backend
-# For local Docker: http://localhost:8000
-# For production with reverse proxy: https://your-domain.com
-VITE_API_URL=http://localhost:8000
+# Target the Node frontend server proxies /api requests to (runtime env var).
+# Inside the compose network the backend service is reachable as "backend".
+BACKEND_ORIGIN=http://backend:8000
 ```
+
+For local (non-Docker) development, run `npm run dev` in `frontend/` with
+`BACKEND_ORIGIN=http://localhost:8000` (the default).
 
 ### Security
 
@@ -113,8 +123,9 @@ The backend container runs database migrations **before** starting the FastAPI a
 **How it works:**
 
 1. Container starts → `entrypoint.sh` executes
-2. `alembic upgrade head` runs to apply any pending migrations
-3. If migrations succeed → FastAPI starts
+2. `alembic upgrade head` runs to apply any pending migrations (alembic.ini and
+   alembic/ are copied to /app by the Dockerfile — the entrypoint verifies this)
+3. If migrations succeed → FastAPI starts (`backend.app.main:app`)
 4. If migrations fail → container exits with error
 
 **Migration Chain:**
@@ -278,10 +289,15 @@ docker compose -f deploy/docker-compose.yml logs backend | grep -i migration
 
 ### How It Works
 
-1. **Frontend** reads `VITE_API_URL` environment variable at build time
-2. The value is baked into the frontend bundle as `import.meta.env.VITE_API_URL`
-3. The API client (`frontend/src/services/api.ts`) uses this URL to make requests
-4. If `VITE_API_URL` is not set, the client falls back to `/api` (proxy mode)
+1. The Vite bundle is built with NO absolute API URL, so the browser calls
+   same-origin `/api/...` paths
+2. The Node frontend server (`server.prod.ts`, compiled to `dist/server.cjs`)
+   proxies every `/api/*` request to `BACKEND_ORIGIN` (runtime environment)
+3. `BACKEND_ORIGIN` is set to `http://backend:8000` in docker-compose; change it
+   per environment WITHOUT rebuilding the frontend image
+4. (`VITE_API_URL` remains supported only for the pre-existing
+   localStorage/custom-URL escape hatch in `api.ts`; it is no longer the
+   deployment mechanism — runtime env vars cannot modify a built Vite bundle)
 
 ### Configuration Scenarios
 
@@ -304,18 +320,12 @@ The reverse proxy routes `/api/*` to the backend service.
 ```
 The frontend uses relative URLs (`/api/*`) and the reverse proxy handles routing.
 
-### Environment Injection
+### Runtime Configuration
 
-The frontend Dockerfile sets the environment variable:
-
-```dockerfile
-ENV VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
-```
-
-This can be overridden at runtime:
+The frontend container receives `BACKEND_ORIGIN` at runtime (compose passes it
+through); no frontend rebuild is needed when the backend URL changes:
 ```bash
-docker compose -f deploy/docker-compose.yml up -d \
-  --env-file .env
+docker compose -f deploy/docker-compose.yml up -d --env-file .env
 ```
 
 ### Secrets and Frontend
@@ -766,8 +776,8 @@ docker compose -f deploy/docker-compose.yml logs backend
 ### Frontend can't reach backend
 
 ```bash
-# Check VITE_API_URL is correct
-docker compose -f deploy/docker-compose.yml exec frontend env | grep VITE_API_URL
+# Check BACKEND_ORIGIN is correct
+docker compose -f deploy/docker-compose.yml exec frontend env | grep BACKEND_ORIGIN
 
 # Check backend is healthy
 curl http://localhost:8000/api/ready
