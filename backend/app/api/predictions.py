@@ -1,23 +1,32 @@
 """Typed prediction and explanation API endpoints."""
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from backend.app.core.auth import require_api_key
 from backend.app.db.database import get_db
-from backend.app.db.models import Machine, Prediction
+from backend.app.db.models import Machine, Prediction, SensorReading
 from backend.app.schemas.sensor import (
     ModelEvaluationResponse,
     ModelStatusResponse,
     ModelTrainRequest,
     ModelTrainResponse,
+    PredictionAnalyzeRequest,
+    PredictionAnalyzeResponse,
     PredictionInput,
     PredictionResponse,
+)
+from backend.app.services.ai_provider import (
+    AIPredictorError,
+    TelemetryInput,
+    build_inference_input,
+    get_predictor,
 )
 from backend.app.services.model_evaluation import build_evaluation
 from backend.app.services.prediction_service import prediction_service
@@ -156,6 +165,139 @@ def execute_prediction(payload: PredictionInput, db: Session = Depends(get_db)) 
     return response_from_prediction(prediction)
 
 
+@router.post("/predictions/analyze", response_model=PredictionAnalyzeResponse,
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_api_key)])
+def analyze_prediction(
+    payload: PredictionAnalyzeRequest, response: Response, db: Session = Depends(get_db)
+) -> PredictionAnalyzeResponse:
+    """External-AI (Gemini) assessment of the latest REAL telemetry.
+
+    Data-integrity rules enforced here:
+
+    - Telemetry is NEVER taken from the request; the analyzed reading is the
+      latest stored SensorReading for the exact (device_id, machine_id) pair.
+      A row from the same device bound to another machine is never used.
+    - Unknown device, unknown machine, or device-bound-to-other-machine => 404
+      BEFORE any provider call. No exact device+machine telemetry => 404.
+    - Missing GEMINI_API_KEY, provider failure, timeout, or invalid AI output
+      => 502-style error with NO prediction row created and no fake fallback.
+    - Idempotency: the same device+machine+telemetry input hashes to the same
+      ``inference_input_hash``; an existing row with that hash is returned as
+      200 instead of creating a duplicate.
+    """
+    machine = db.query(Machine).filter(Machine.machine_id == payload.machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail=f"Machine '{payload.machine_id}' does not exist in registry.")
+
+    device = (
+        db.query(SensorReading.device_id)
+        .filter(
+            SensorReading.device_id == payload.device_id,
+            SensorReading.machine_id == payload.machine_id,
+        )
+        .first()
+    )
+    if device is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No telemetry found for device '{payload.device_id}' on machine "
+                f"'{payload.machine_id}'. Refusing to analyze without an exact "
+                "device+machine match."
+            ),
+        )
+
+    reading = (
+        db.query(SensorReading)
+        .filter(
+            SensorReading.device_id == payload.device_id,
+            SensorReading.machine_id == payload.machine_id,
+        )
+        .order_by(desc(SensorReading.timestamp), desc(SensorReading.id))
+        .first()
+    )
+    if reading is None:  # Defensive; the device probe above already guarantees a row.
+        raise HTTPException(status_code=404, detail="No telemetry found for the exact device+machine pair.")
+
+    telemetry = TelemetryInput(
+        device_id=reading.device_id,
+        machine_id=reading.machine_id,
+        timestamp=_iso_utc(reading.timestamp),
+        temperature=reading.temperature,
+        vibration=reading.vibration,
+        current=reading.current,
+        rpm=reading.rpm,
+        machine_type=machine.type,
+        machine_status=machine.status,
+        max_temp=machine.max_temp,
+        max_vibration=machine.max_vibration,
+        rated_current=machine.rated_current,
+        rated_rpm=machine.rated_rpm,
+    )
+    inference_input = build_inference_input(telemetry)
+    input_hash = hashlib.sha256(
+        json.dumps(inference_input, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    # Deterministic idempotency: identical device+machine+telemetry input must
+    # not create duplicate prediction rows. Model id + hash identifies exactly
+    # one analysis of one telemetry input.
+    predictor = get_predictor()
+    existing = (
+        db.query(Prediction)
+        .filter(
+            Prediction.machine_id == payload.machine_id,
+            Prediction.model_version == predictor.model_identifier,
+            Prediction.explanation_data.like(f'%"{_HASH_KEY}": "{input_hash}"%'),
+        )
+        .order_by(desc(Prediction.id))
+        .first()
+    )
+    if existing is not None:
+        # Idempotent replay: already persisted for this exact input.
+        response.status_code = status.HTTP_200_OK
+        return _analyze_response(existing)
+
+    try:
+        assessment = predictor.analyze_telemetry(telemetry)
+    except AIPredictorError as exc:
+        # Fail safe: no row, no fallback prediction, honest error surface.
+        raise HTTPException(status_code=502, detail=f"External AI analysis failed: {exc}") from exc
+
+    observed_at = _normalise_utc(reading.timestamp)
+    now = datetime.now(timezone.utc)
+    prediction = Prediction(
+        machine_id=machine.machine_id,
+        timestamp=observed_at,  # real telemetry timestamp, never wall clock
+        failure_probability=assessment.failure_probability,
+        component=assessment.likely_component,
+        confidence=assessment.confidence,
+        explanation=assessment.explanation,
+        recommended_action=assessment.recommended_action,
+        model_version=predictor.model_identifier,
+        is_prototype=False,  # external AI assessment, not the physics prototype
+        explanation_data=json.dumps(
+            {
+                "source": "external_ai",
+                "provider": "gemini",
+                "model": predictor.model,
+                "input_timestamp": _iso_utc(reading.timestamp),
+                "inference_input_hash": input_hash,
+                "health_status": assessment.health_status,
+                "severity": assessment.severity,
+                "assessment": assessment.raw,
+                "device_id": reading.device_id,
+            }
+        ),
+        created_at=now,
+    )
+    db.add(prediction)
+    db.commit()
+    db.refresh(prediction)
+    return _analyze_response(prediction)
+
+
 @router.get("/machines/{machine_id}/prediction", response_model=PredictionResponse)
 def get_machine_prediction(machine_id: str, db: Session = Depends(get_db)) -> PredictionResponse:
     machine = db.query(Machine).filter(Machine.machine_id == machine_id).first()
@@ -178,3 +320,66 @@ def list_predictions(machine_id: Optional[str] = None, db: Session = Depends(get
     if machine_id:
         query = query.filter(Prediction.machine_id == machine_id)
     return [response_from_prediction(item) for item in query.order_by(desc(Prediction.timestamp)).all()]
+
+
+_HASH_KEY = "inference_input_hash"
+
+
+def _iso_utc(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _normalise_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _analyze_response(prediction: Prediction) -> PredictionAnalyzeResponse:
+    """Map a persisted analyze-row onto the response schema, defensively.
+
+    explanation_data is written ONLY after strict AI-output validation, but a
+    corrupted or hand-edited row must degrade to an honest 200 response built
+    from the persisted columns, never a 500. Newly generated assessments are
+    unaffected: their validation happens earlier in analyze_prediction.
+    """
+    try:
+        data = json.loads(prediction.explanation_data or "{}")
+        if not isinstance(data, dict):
+            data = {}
+    except (json.JSONDecodeError, TypeError, ValueError):
+        data = {}
+
+    def _field(name: str, fallback: str) -> str:
+        value = data.get(name)
+        return value if isinstance(value, str) and value else fallback
+
+    input_timestamp = prediction.timestamp
+    raw_ts = data.get("input_timestamp")
+    if isinstance(raw_ts, str):
+        try:
+            input_timestamp = datetime.fromisoformat(raw_ts)
+        except (TypeError, ValueError):
+            pass  # Corrupted timestamp: fall back to the persisted row timestamp.
+
+    return PredictionAnalyzeResponse(
+        id=prediction.id,
+        machine_id=prediction.machine_id,
+        device_id=_field("device_id", ""),
+        timestamp=prediction.timestamp,
+        failure_probability=prediction.failure_probability,
+        health_status=_field("health_status", "unknown"),
+        likely_component=prediction.component or "",
+        severity=_field("severity", "unknown"),
+        explanation=prediction.explanation or "",
+        recommended_action=prediction.recommended_action or "",
+        confidence=prediction.confidence,
+        model_version=prediction.model_version or "",
+        source=_field("source", "external_ai"),
+        provider=_field("provider", "gemini"),
+        input_timestamp=input_timestamp,
+        inference_input_hash=_field("inference_input_hash", ""),
+        created_at=prediction.created_at,
+    )

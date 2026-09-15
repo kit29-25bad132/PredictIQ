@@ -242,6 +242,39 @@ class PredictionResponse(BaseModel):
         from_attributes = True
 
 
+class PredictionAnalyzeRequest(BaseModel):
+    """Request for external-AI analysis: identity only, never telemetry values.
+
+    The analyzed telemetry is always the latest REAL database reading for the
+    exact device+machine pair; accepting values here would bypass that rule.
+    """
+
+    device_id: str = Field(..., min_length=1, max_length=100, example="ESP32_001")
+    machine_id: str = Field(..., min_length=1, max_length=50, example="TEST-001")
+
+
+class PredictionAnalyzeResponse(BaseModel):
+    """Validated external-AI assessment persisted with full provenance."""
+
+    id: int
+    machine_id: str
+    device_id: str
+    timestamp: datetime  # the analyzed telemetry's exact timestamp
+    failure_probability: float
+    health_status: str
+    likely_component: str
+    severity: str
+    explanation: str
+    recommended_action: str
+    confidence: float
+    model_version: str  # 'gemini:<actual-model>'
+    source: str  # 'external_ai'
+    provider: str  # 'gemini'
+    input_timestamp: datetime
+    inference_input_hash: str  # SHA-256 of the real inference input
+    created_at: Optional[datetime] = None
+
+
 class PredictionInput(BaseModel):
     machine_id: str = Field(..., min_length=1, max_length=50)
     temperature: float = Field(..., ge=-50, le=300)
