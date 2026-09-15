@@ -7,8 +7,38 @@
 #define WIFI_SSID "Wokwi-GUEST"
 #define WIFI_PASSWORD ""
 
-// Replace with a publicly reachable FastAPI URL or tunnel URL. Do not use localhost.
-#define API_BASE_URL "http://localhost:8000"  // Set to a reachable FastAPI URL; do NOT use dead tunnel URLs
+// Replace with a publicly reachable FastAPI URL or tunnel URL. For local Wokwi
+// simulation use the developer machine's LAN address: host.wokwi.internal
+// resolves ONLY inside the simulated network (not on the Windows host), and
+// the local gateway path is not available to wokwi-cli runs in this
+// environment. Plain HTTP on the local trusted dev network keeps TLS out of
+// the Phase 4 proof path. Update the octets if the laptop's Wi-Fi address
+// changes (see ipconfig).
+#define API_BASE_URL "http://10.34.58.145:8000"  // Local FastAPI via laptop LAN address (Phase 4 proof)
+//
+// TLS trust anchor for API_BASE_URL (PUBLIC certificate - not a secret):
+// Google Trust Services "GTS Root R4" (self-signed ECDSA P-384, 2016-2036),
+// the root CA of the Cloudflare Quick Tunnel certificate chain:
+//   leaf *.trycloudflare.com -> GTS WE1 -> GTS Root R4
+// SHA-256: 34:9D:FA:40:58:C5:E2:63:12:3B:39:8A:E7:95:57:3C:4E:13:13:C8:3F:E6:8F:93:55:6C:D5:E8:03:1B:3C:7D
+// Source: https://pki.goog/repo/certs/gtsr4.pem
+// Passed to setCACert() in api_client.cpp so certificate verification stays
+// fully ENABLED (chain + hostname/SNI). Never replace with setInsecure()
+// outside the TLS_ALLOW_INSECURE test build.
+#define API_ROOT_CA \
+    "-----BEGIN CERTIFICATE-----\n" \
+    "MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD\n" \
+    "VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG\n" \
+    "A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw\n" \
+    "WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz\n" \
+    "IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi\n" \
+    "AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi\n" \
+    "QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR\n" \
+    "HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW\n" \
+    "BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n" \
+    "9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n" \
+    "p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n" \
+    "-----END CERTIFICATE-----\n"
 
 // Write-gate credential (DEVICE_API_KEY configured on the backend). Sent as the
 // 'X-API-Key' header on every POST. Leave empty ONLY when the backend has no
@@ -18,7 +48,7 @@
 #endif
 
 #define DEVICE_ID "ESP32_001"
-#define MACHINE_ID "M001"
+#define MACHINE_ID "TEST-001"
 #define SENSOR_SOURCE "WOKWI"
 #define FIRMWARE_VERSION "1.0.0"
 

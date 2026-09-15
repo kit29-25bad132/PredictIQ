@@ -31,7 +31,7 @@ bool beginRequest(HTTPClient& http, HttpTransport& transport, const String& endp
         if (TLS_INSECURE_ALLOWED) {
             transport.secure.setInsecure();
         } else {
-            transport.secure.setCACert(nullptr);
+            transport.secure.setCACert(API_ROOT_CA);
             transport.secure.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);
         }
         return http.begin(transport.secure, endpoint);

@@ -3,7 +3,7 @@
   "author": "Predict IQ",
   "editor": "wokwi",
   "parts": [
-    { "type": "board-esp32-s3-devkitc-1", "id": "esp", "top": 0, "left": 0, "attrs": { "serialInterface": "USB_SERIAL_JTAG" } },
+    { "type": "board-esp32-s3-devkitc-1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
     { "type": "wokwi-ds18b20", "id": "temp", "top": -80, "left": 320, "attrs": { "temperature": "24" } },
     { "type": "wokwi-resistor", "id": "pullup", "top": -10, "left": 270, "attrs": { "value": "4.7k" } },
     { "type": "wokwi-mpu6050", "id": "mpu", "top": 160, "left": 320, "attrs": {} },
@@ -25,7 +25,9 @@
     [ "esp:GND.4", "current:GND", "black", [] ],
     [ "esp:1", "current:SIG", "orange", [] ],
     [ "esp:GND.4", "pulse:GND", "black", [] ],
-    [ "esp:18", "pulse:CLK", "purple", [] ]
+    [ "esp:18", "pulse:CLK", "purple", [] ],
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ]
   ],
   "dependencies": {}
 }

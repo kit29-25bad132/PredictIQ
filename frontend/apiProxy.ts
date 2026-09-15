@@ -20,6 +20,12 @@ export function createApiProxy(backendOrigin: string) {
   const transport = origin.protocol === "https:" ? https : http;
 
   return function proxyApi(req: Request, res: Response, next: NextFunction) {
+    // Only /api/* is forwarded to the backend. Everything else falls through
+    // to the static SPA bundle (and index.html fallback) served by the server.
+    if (!req.path.startsWith("/api")) {
+      next();
+      return;
+    }
     const headers = { ...req.headers, host: origin.host };
 
     const upstreamReq = transport.request(
