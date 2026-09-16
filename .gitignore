@@ -23,6 +23,11 @@ dist/
 build/
 .vite/
 
+# Firmware / PlatformIO build artifacts and downloaded lib deps
+.pio/
+.pioenvs/
+.piolibdeps/
+
 # OS / editor
 .DS_Store
 Thumbs.db
@@ -31,6 +36,7 @@ Thumbs.db
 
 # Logs
 *.log
+deploy/nginx/certbot-webroot/
 
 # Local databases / runtime data
 *.db
@@ -45,6 +51,15 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# TLS certificates / private keys (deployment, never commit)
+deploy/nginx/certs/
+deploy/nginx/certs-data/
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
 
 # V0 generated dependencies inside the frozen audit copy
 audit/projectv0/predict-iq/.venv/

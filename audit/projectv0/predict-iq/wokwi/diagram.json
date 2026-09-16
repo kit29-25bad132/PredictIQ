@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "author": "Predict IQ",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-s3-devkitc-1", "id": "esp", "top": 0, "left": 0, "attrs": { "serialInterface": "USB_SERIAL_JTAG" } },
+    { "type": "wokwi-ds18b20", "id": "temp", "top": -80, "left": 320, "attrs": { "temperature": "24" } },
+    { "type": "wokwi-resistor", "id": "pullup", "top": -10, "left": 270, "attrs": { "value": "4.7k" } },
+    { "type": "wokwi-mpu6050", "id": "mpu", "top": 160, "left": 320, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "current", "top": 340, "left": 320, "attrs": { "value": "2048" } },
+    { "type": "wokwi-clock-generator", "id": "pulse", "top": 500, "left": 320, "attrs": { "frequency": "10" } }
+  ],
+  "connections": [
+    [ "esp:3V3.1", "temp:VCC", "red", [] ],
+    [ "esp:GND.1", "temp:GND", "black", [] ],
+    [ "esp:4", "temp:DQ", "green", [] ],
+    [ "esp:3V3.1", "pullup:1", "red", [] ],
+    [ "pullup:2", "temp:DQ", "green", [] ],
+    [ "esp:3V3.2", "mpu:VCC", "red", [] ],
+    [ "esp:GND.2", "mpu:GND", "black", [] ],
+    [ "esp:8", "mpu:SDA", "blue", [] ],
+    [ "esp:9", "mpu:SCL", "yellow", [] ],
+    [ "esp:GND.3", "mpu:AD0", "black", [] ],
+    [ "esp:3V3.1", "current:VCC", "red", [] ],
+    [ "esp:GND.4", "current:GND", "black", [] ],
+    [ "esp:1", "current:SIG", "orange", [] ],
+    [ "esp:GND.4", "pulse:GND", "black", [] ],
+    [ "esp:18", "pulse:CLK", "purple", [] ]
+  ],
+  "dependencies": {}
+}
