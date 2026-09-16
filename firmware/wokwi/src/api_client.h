@@ -5,5 +5,6 @@
 
 bool sendTelemetry(const SensorReading& temperature, const SensorReading& vibration, const SensorReading& current, const SensorReading& rpm);
 bool sendHeartbeat();
+void runTlsDiagnostics();
 
 #endif

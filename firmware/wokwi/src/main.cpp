@@ -12,6 +12,15 @@ void setup() {
 
     initSensors();
     initWiFi();
+
+    // --- TEMPORARY: Run TLS diagnostics once on boot ---
+    if (isWiFiConnected()) {
+        runTlsDiagnostics();
+    } else {
+        Serial.println("[DIAG] WiFi not connected, skipping TLS diagnostics");
+    }
+    // --- END TEMPORARY ---
+
     sendHeartbeat();
 }
 
