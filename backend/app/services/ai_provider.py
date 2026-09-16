@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Official Google Generative Language REST API endpoint (HTTPS only).
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_RESPONSE_BYTES = 1_000_000  # 1 MiB guard against pathological payloads.
@@ -254,7 +254,7 @@ class GeminiProvider:
 
     @property
     def model_identifier(self) -> str:
-        """Stable identifier persisted on predictions, e.g. 'gemini:gemini-2.5-flash'."""
+        """Stable identifier persisted on predictions, e.g. 'gemini:gemini-3.6-flash'."""
         return f"gemini:{self.model}"
 
     def analyze_telemetry(self, telemetry: TelemetryInput) -> AIAssessment:

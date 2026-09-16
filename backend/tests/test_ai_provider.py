@@ -40,7 +40,7 @@ from backend.app.services.ai_provider import (
 )
 
 TEST_KEY = "test-write-key-12345"
-MODEL_ID = "gemini:gemini-2.5-flash"
+MODEL_ID = "gemini:gemini-3.6-flash"
 
 
 # ============================================================================
@@ -95,9 +95,8 @@ def client():
 
     get_settings().device_api_key = TEST_KEY
     # Pin the model so tests are hermetic: a developer's local .env may set
-    # GEMINI_MODEL (e.g. to the production gemini-3.6-flash) and must not
-    # change which literals these tests assert on.
-    get_settings().gemini_model = "gemini-2.5-flash"
+    # GEMINI_MODEL and must not change which literals these tests assert on.
+    get_settings().gemini_model = "gemini-3.6-flash"
     auth_module._WARNED_UNCONFIGURED = False
     app.dependency_overrides[get_db] = override_get_db
     try:
@@ -306,7 +305,7 @@ class TestAnalyzeEndpoint:
                 data = json.loads(stored.explanation_data)
                 assert data["source"] == "external_ai"
                 assert data["provider"] == "gemini"
-                assert data["model"] == "gemini-2.5-flash"
+                assert data["model"] == "gemini-3.6-flash"
                 assert data["input_timestamp"].startswith("2026-03-01T12:00:00")
                 assert data["inference_input_hash"] == body["inference_input_hash"]
         finally:
@@ -723,7 +722,7 @@ class TestFullProviderPipeline:
 
         assert response.status_code == 201, response.text
         # The real request builder produced the official REST URL and prompt.
-        assert captured["url"].endswith("/v1beta/models/gemini-2.5-flash:generateContent")
+        assert captured["url"].endswith("/v1beta/models/gemini-3.6-flash:generateContent")
         prompt_text = captured["body"]["contents"][0]["parts"][0]["text"]
         assert "78.5" in prompt_text  # real DB telemetry reached the prompt
         # Response validated through the real path and persisted.

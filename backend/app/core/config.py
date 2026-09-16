@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     # endpoint returns an explicit configuration error and never fabricates a
     # prediction. The key never enters source code or logs.
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.6-flash"
 
     # CORS - deliberate origins only. Empty list means "no browser origins allowed".
     cors_origins: Annotated[List[str], NoDecode] = []
