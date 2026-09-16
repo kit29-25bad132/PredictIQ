@@ -41,6 +41,48 @@ MAX_RESPONSE_BYTES = 1_000_000  # 1 MiB guard against pathological payloads.
 HEALTH_STATUSES = ("healthy", "warning", "faulted", "unknown")
 SEVERITIES = ("nominal", "minor", "major", "critical")
 
+# Gemini request tuning (official docs: ai.google.dev/gemini-api/docs/thinking):
+# thinking tokens are billed against max_output_tokens, and an exhausted token
+# budget truncates the response (finishReason "incomplete", truncated or empty
+# output) — the exact mechanism that made a thinking-default 3.6 Flash emit
+# non-JSON output under the old 1024-token cap. The documented remedy is a
+# generous max_output_tokens plus an explicit thinking_level, never a small
+# token ceiling.
+GEMINI_THINKING_LEVEL = "low"
+GEMINI_MAX_OUTPUT_TOKENS = 2048
+
+# Strict structured-output contract for the analyze assessment, sent via the
+# documented v1beta generateContent mechanism (responseMimeType + responseSchema)
+# so the model is constrained to JSON syntax matching this shape.
+# validate_assessment() still enforces semantic correctness afterwards.
+ASSESSMENT_RESPONSE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "assessment": {
+            "type": "object",
+            "properties": {
+                "failure_probability": {"type": "number"},
+                "health_status": {"type": "string", "enum": list(HEALTH_STATUSES)},
+                "likely_component": {"type": "string"},
+                "severity": {"type": "string", "enum": list(SEVERITIES)},
+                "explanation": {"type": "string"},
+                "recommended_action": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": [
+                "failure_probability",
+                "health_status",
+                "likely_component",
+                "severity",
+                "explanation",
+                "recommended_action",
+                "confidence",
+            ],
+        }
+    },
+    "required": ["assessment"],
+}
+
 
 class AIPredictorError(Exception):
     """Raised for any provider failure: config, network, timeout, or bad output."""
@@ -224,9 +266,18 @@ class GeminiProvider:
         request_body = {
             "contents": [{"parts": [{"text": build_prompt(inference_input)}]}],
             "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 1024,
+                # Documented structured-output mechanism: forces syntactically
+                # valid JSON constrained to the assessment schema.
                 "responseMimeType": "application/json",
+                "responseSchema": ASSESSMENT_RESPONSE_SCHEMA,
+                # Documented thinking/limit tuning for 3.x Flash: enough budget
+                # for thinking plus the full JSON assessment, with an explicit
+                # low thinking_level instead of a small token cap. The sampling
+                # parameters temperature/topP/topK are deprecated as of
+                # 2026-07-21 and deliberately omitted; validate_assessment()
+                # pins output semantics.
+                "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
+                "thinkingConfig": {"thinkingLevel": GEMINI_THINKING_LEVEL},
             },
         }
         url = f"{self.api_base_url}/{self.model}:generateContent"

@@ -94,6 +94,10 @@ def client():
             yield db
 
     get_settings().device_api_key = TEST_KEY
+    # Pin the model so tests are hermetic: a developer's local .env may set
+    # GEMINI_MODEL (e.g. to the production gemini-3.6-flash) and must not
+    # change which literals these tests assert on.
+    get_settings().gemini_model = "gemini-2.5-flash"
     auth_module._WARNED_UNCONFIGURED = False
     app.dependency_overrides[get_db] = override_get_db
     try:
@@ -101,6 +105,7 @@ def client():
     finally:
         get_settings().device_api_key = ""
         get_settings().gemini_api_key = ""
+        get_settings().gemini_model = ""
         auth_module._WARNED_UNCONFIGURED = False
         app.dependency_overrides.pop(get_db, None)
 
@@ -556,6 +561,40 @@ class TestFailSafe:
         with pytest.raises(AIPredictorError):
             validate_assessment({"assessment": bad})
 
+    def test_truncated_model_json_returns_502_and_no_row(self, client):
+        """Production-blocker regression: an exhausted output/thinking budget
+        truncates the model text mid-JSON; it must fail safely with no row."""
+        testclient, factory = client
+        get_settings().gemini_api_key = "test-key"
+        seed_machine(factory)
+
+        def truncated_text(self, url, body):
+            return '{"assessment": {"failure_probability": 0.4'
+
+        _patch_transport(truncated_text)
+        try:
+            response = analyze(testclient)
+            assert response.status_code == 502
+            assert "not valid JSON" in response.json()["detail"]
+            assert self._row_count(factory) == 0
+        finally:
+            _unpatch_transport()
+
+    def test_boolean_in_numeric_field_is_rejected(self):
+        """Booleans masquerading as numbers must fail strict validation."""
+        bad_probability = {**VALID_ASSESSMENT, "failure_probability": True}
+        with pytest.raises(AIPredictorError, match="failure_probability"):
+            validate_assessment({"assessment": bad_probability})
+        bad_confidence = {**VALID_ASSESSMENT, "confidence": False}
+        with pytest.raises(AIPredictorError, match="confidence"):
+            validate_assessment({"assessment": bad_confidence})
+
+    def test_absent_required_field_is_rejected(self):
+        """A missing (absent, not just null) required field must fail."""
+        bad = {k: v for k, v in VALID_ASSESSMENT.items() if k != "recommended_action"}
+        with pytest.raises(AIPredictorError, match="recommended_action"):
+            validate_assessment({"assessment": bad})
+
 
 # ============================================================================
 # 4. Idempotency
@@ -656,7 +695,74 @@ class TestFullProviderPipeline:
 
 
 # ============================================================================
-# 6. Regression: train-model refusal unchanged
+# 6. Request configuration: documented structured-output + thinking contract
+# ============================================================================
+
+class TestGeminiRequestContract:
+    """The generateContent request body must carry the currently documented
+    structured-output and thinking/output-budget configuration (production
+    non-JSON-response fix for thinking-default Gemini 3.x Flash)."""
+
+    def _captured_body(self, client):
+        testclient, factory = client
+        get_settings().gemini_api_key = "test-key"
+        seed_machine(factory)
+        captured = {}
+
+        def recorder(self, url, body):
+            captured["url"] = url
+            captured["body"] = body
+            return json.dumps(gemini_envelope(VALID_ASSESSMENT))
+
+        _patch_transport(recorder)
+        try:
+            response = analyze(testclient)
+        finally:
+            _unpatch_transport()
+        assert response.status_code == 201, response.text
+        return captured
+
+    def test_request_requires_structured_json_output(self, client):
+        body = self._captured_body(client)["body"]
+        config = body["generationConfig"]
+        assert config["responseMimeType"] == "application/json"
+        schema = config["responseSchema"]
+        assert schema["type"] == "object"
+        assert "assessment" in schema.get("required", [])
+        assessment = schema["properties"]["assessment"]
+        assert assessment["type"] == "object"
+        for field in (
+            "failure_probability",
+            "health_status",
+            "likely_component",
+            "severity",
+            "explanation",
+            "recommended_action",
+            "confidence",
+        ):
+            assert field in assessment["properties"], field
+            assert field in assessment.get("required", []), field
+        assert assessment["properties"]["health_status"]["enum"] == [
+            "healthy", "warning", "faulted", "unknown"
+        ]
+        assert assessment["properties"]["severity"]["enum"] == [
+            "nominal", "minor", "major", "critical"
+        ]
+
+    def test_request_uses_documented_thinking_and_output_budget(self, client):
+        body = self._captured_body(client)["body"]
+        config = body["generationConfig"]
+        # Explicit thinking level instead of a small token cap (official docs).
+        assert config["thinkingConfig"]["thinkingLevel"] == "low"
+        # Enough budget for thinking plus the complete assessment JSON.
+        assert config["maxOutputTokens"] >= 2048
+        # Sampling parameters deprecated 2026-07-21 must stay absent.
+        for deprecated in ("temperature", "topP", "topK"):
+            assert deprecated not in config
+
+
+# ============================================================================
+# 7. Regression: train-model refusal unchanged
 # ============================================================================
 
 class TestTrainModelUnchanged:
