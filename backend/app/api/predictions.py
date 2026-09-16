@@ -249,7 +249,7 @@ def analyze_prediction(
         .filter(
             Prediction.machine_id == payload.machine_id,
             Prediction.model_version == predictor.model_identifier,
-            Prediction.explanation_data.like(f'%"{_HASH_KEY}": "{input_hash}"%'),
+            Prediction.input_hash == input_hash,
         )
         .order_by(desc(Prediction.id))
         .first()
@@ -277,6 +277,7 @@ def analyze_prediction(
         recommended_action=assessment.recommended_action,
         model_version=predictor.model_identifier,
         is_prototype=False,  # external AI assessment, not the physics prototype
+        input_hash=input_hash,
         explanation_data=json.dumps(
             {
                 "source": "external_ai",

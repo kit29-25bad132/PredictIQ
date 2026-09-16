@@ -652,6 +652,49 @@ class TestIdempotency:
         finally:
             _unpatch_analyze()
 
+    def test_input_hash_column_is_persisted(self, client):
+        testclient, factory = client
+        get_settings().gemini_api_key = "test-key"
+        seed_machine(factory)
+
+        _patch_analyze(_always_valid)
+        try:
+            resp = analyze(testclient)
+            assert resp.status_code == 201
+        finally:
+            _unpatch_analyze()
+
+        with factory() as db:
+            pred = db.query(Prediction).first()
+            assert pred.input_hash is not None
+            assert len(pred.input_hash) == 64  # SHA-256 hex digest
+
+    def test_duplicate_input_hash_returns_existing_row(self, client):
+        testclient, factory = client
+        get_settings().gemini_api_key = "test-key"
+        seed_machine(factory)
+
+        _patch_analyze(_always_valid)
+        try:
+            first = analyze(testclient)
+            assert first.status_code == 201
+        finally:
+            _unpatch_analyze()
+
+        with factory() as db:
+            pred = db.query(Prediction).first()
+            assert pred.input_hash is not None
+            duplicate_hash = pred.input_hash
+
+        second_resp = analyze(testclient)
+        assert second_resp.status_code == 200
+        assert second_resp.json()["id"] == first.json()["id"]
+
+        with factory() as db:
+            assert db.query(Prediction).count() == 1
+            pred = db.query(Prediction).first()
+            assert pred.input_hash == duplicate_hash
+
 
 # ============================================================================
 # 5. Full provider pipeline: real extraction + validation (transport faked)

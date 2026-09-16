@@ -1,5 +1,40 @@
 #include "api_client.h"
+
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <time.h>
+
+namespace {
+
+// Transport selection follows the configured URL scheme so HTTP dev fallback
+// works without weakening HTTPS: HTTPS keeps the TLS discipline below
+// (certificate verification ON unless the TLS_ALLOW_INSECURE test build flag is
+// set); HTTP uses a plain client and no TLS flag applies.
+struct HttpTransport {
+    WiFiClient plain;
+    WiFiClientSecure secure;
+    bool tls = false;
+};
+
+bool beginRequest(HTTPClient& http, HttpTransport& transport, const String& endpoint) {
+    transport.tls = endpoint.startsWith("https://");
+    if (transport.tls) {
+        // TLS discipline: certificate validation is bypassed ONLY under the
+        // explicit test build flag (TLS_ALLOW_INSECURE), for tunnels whose
+        // certificates cannot be validated by the ESP32 trust store. See config.h.
+        if (TLS_INSECURE_ALLOWED) {
+            transport.secure.setInsecure();
+        } else {
+            transport.secure.setCACert(API_ROOT_CA);
+            transport.secure.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);
+        }
+        return http.begin(transport.secure, endpoint);
+    }
+    return http.begin(transport.plain, endpoint);
+}
+
+}  // namespace
 
 static bool getFormattedTimestamp(String& timestamp) {
     time_t now = time(nullptr);
@@ -25,7 +60,11 @@ bool sendHeartbeat(const TelemetrySnapshot& snapshot) {
 
     String endpoint = String(API_BASE_URL) + "/api/devices/heartbeat";
     HTTPClient http;
-    http.begin(endpoint);
+    HttpTransport transport;
+    if (!beginRequest(http, transport, endpoint)) {
+        Serial.println("[API CLIENT] Failed to open connection to API.");
+        return false;
+    }
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
 #ifdef DEVICE_API_KEY
@@ -99,7 +138,11 @@ bool sendSensorTelemetry(const TelemetrySnapshot& snapshot) {
 
     String endpoint = String(API_BASE_URL) + "/api/sensor-data";
     HTTPClient http;
-    http.begin(endpoint);
+    HttpTransport transport;
+    if (!beginRequest(http, transport, endpoint)) {
+        Serial.println("[API CLIENT] Failed to open connection to API.");
+        return false;
+    }
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
 #ifdef DEVICE_API_KEY

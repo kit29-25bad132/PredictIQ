@@ -14,7 +14,7 @@
 // environment. Plain HTTP on the local trusted dev network keeps TLS out of
 // the Phase 4 proof path. Update the octets if the laptop's Wi-Fi address
 // changes (see ipconfig).
-#define API_BASE_URL "http://10.34.58.145:8000"  // Local FastAPI via laptop LAN address (Phase 4 proof)
+#define API_BASE_URL "https://predictiq-backend-771t.onrender.com"  // Render managed HTTPS (GTS WE1 -> pinned GTS Root R4)
 //
 // TLS trust anchor for API_BASE_URL (PUBLIC certificate - not a secret):
 // Google Trust Services "GTS Root R4" (self-signed ECDSA P-384, 2016-2036),

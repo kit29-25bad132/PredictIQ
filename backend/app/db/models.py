@@ -4,7 +4,7 @@ Defines production relational schemas for machines, IoT devices, real sensor rea
 maintenance records, ML predictions, and alerts.
 """
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Integer, Float, String, DateTime, Text, ForeignKey, Index
+from sqlalchemy import Boolean, CheckConstraint, Column, Integer, Float, String, DateTime, Text, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -143,6 +143,7 @@ class Prediction(Base):
     model_version = Column(String(100), nullable=True)
     is_prototype = Column(Boolean, nullable=False, default=True)
     explanation_data = Column(Text, nullable=True)
+    input_hash = Column(String(64), nullable=True)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -151,6 +152,8 @@ class Prediction(Base):
 
     __table_args__ = (
         Index("ix_predictions_machine_timestamp", "machine_id", "timestamp"),
+        UniqueConstraint("machine_id", "model_version", "input_hash",
+                         name="uq_predictions_idempotency"),
     )
 
 # ============================================================================
