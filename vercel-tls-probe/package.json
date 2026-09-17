@@ -1,0 +1,6 @@
+{
+  "name": "predictiq-tls-probe",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Disposable HTTPS endpoint for Wokwi TLS discrimination test"
+}
