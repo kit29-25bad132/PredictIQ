@@ -340,6 +340,75 @@ static int _diag_https_post_render(const char* url, const char* hostname, const 
     return httpStatus;
 }
 
+// HTTPS POST diagnostic: attempts a full TLS handshake and HTTP POST to the
+// Vercel TLS probe endpoint. Discriminates whether the Wokwi TLS stack can
+// complete a verified HTTPS handshake with a Vercel-hosted server.
+static int _diag_https_post_vercel(const char* url, const char* hostname, const char* ca_pem) {
+    Serial.printf("\n[DIAG] ===== HTTPS POST: %s =====\n", url);
+    Serial.printf("[DIAG] TEST 4: Vercel TLS probe (discrimination test)\n");
+
+    // Stage 1: DNS
+    _diag_dns_resolve(hostname);
+
+    // Stage 2-3: TLS handshake via WiFiClientSecure (does TCP+TLS together)
+    DiagnosticSecureClient client;
+    client.setCACert(ca_pem);
+    client.setHandshakeTimeout(HTTP_TIMEOUT_MS / 1000);
+
+    unsigned long t0 = millis();
+    bool connected = client.connect(hostname, 443);
+    unsigned long elapsed = millis() - t0;
+
+    if (!connected) {
+        char err_buf[128];
+        int last_err = client.lastError(err_buf, sizeof(err_buf));
+        // SAFETY: no session was negotiated; do not query the SSL context.
+        _diag_report_stage_fail(hostname, elapsed, err_buf, last_err);
+        client.stop();
+        return last_err;
+    }
+
+    Serial.printf("TLS HANDSHAKE: PASS (%lu ms)\n", elapsed);
+
+    // Stage 4-7: TLS metadata (valid ONLY after a successful handshake)
+    _diag_print_negotiated(client.getSslContext());
+
+    // Stage 8: HTTP POST (minimal body, no auth)
+    JsonDocument payload;
+    payload["test"] = "tls-discrimination";
+    String body;
+    serializeJson(payload, body);
+
+    Serial.printf("[DIAG] Sending HTTP POST (%d bytes)...\n", body.length());
+    HTTPClient http;
+    http.begin(client, url);
+    http.setTimeout((unsigned long)HTTP_TIMEOUT_MS);
+    http.addHeader("Content-Type", "application/json");
+
+    t0 = millis();
+    Serial.printf("HTTP REQUEST: POST %s (%d bytes)\n", url, body.length());
+    int httpStatus = http.POST(body);
+    elapsed = millis() - t0;
+
+    if (httpStatus > 0) {
+        Serial.printf("HTTP RESPONSE: RECEIVED (status=%d, %lu ms)\n", httpStatus, elapsed);
+        String response = http.getString();
+        Serial.printf("[DIAG] Response length: %d bytes\n", response.length());
+        if (response.length() <= 1024) {
+            Serial.printf("[DIAG] Response body: %s\n", response.c_str());
+        } else {
+            Serial.printf("[DIAG] Response body (first 1024): %s\n", response.substring(0, 1024).c_str());
+        }
+    } else {
+        Serial.printf("HTTP RESPONSE: NOT AVAILABLE (HTTPClient error %d: %s)\n", httpStatus, http.errorToString(httpStatus).c_str());
+    }
+
+    http.end();
+    client.stop();
+    Serial.printf("[DIAG] ===== END HTTPS POST: %s =====\n\n", url);
+    return httpStatus;
+}
+
 // Run full diagnostic suite. Called once from setup().
 void runTlsDiagnostics() {
     Serial.println("\n");
@@ -391,6 +460,17 @@ void runTlsDiagnostics() {
         API_ROOT_CA
     );
 
+    // --- TEST 4: Vercel TLS probe (discrimination test) ---
+    Serial.println("╔══════════════════════════════════════════════════════╗");
+    Serial.println("║  TEST 4: Vercel TLS probe (discrimination test)     ║");
+    Serial.println("╚══════════════════════════════════════════════════════╝");
+    Serial.printf("TEST 4 TARGET: %s\n", VERCEL_PROBE_URL);
+    int vercelStatus = _diag_https_post_vercel(
+        VERCEL_PROBE_URL,
+        VERCEL_PROBE_HOST,
+        VERCEL_ROOT_CA
+    );
+
     // --- SUMMARY ---
     Serial.println("╔══════════════════════════════════════════════════════╗");
     Serial.println("║  DIAGNOSTIC SUMMARY                                 ║");
@@ -399,24 +479,24 @@ void runTlsDiagnostics() {
     Serial.printf("  TEST 1 (example.com GET): %s\n", exStatus > 0 ? "PASS" : "FAIL");
     Serial.printf("  TEST 2 (Render GET):      %s (status=%d)\n", renderStatus > 0 ? "PASS" : "FAIL", renderStatus);
     Serial.printf("  TEST 3 (Render POST):     %s (status=%d)\n", postStatus > 0 ? "PASS" : "FAIL", postStatus);
+    Serial.printf("  TEST 4 (Vercel POST):     %s (status=%d)\n", vercelStatus > 0 ? "PASS" : "FAIL", vercelStatus);
     Serial.println();
 
-    if (exStatus > 0 && renderStatus <= 0) {
-        Serial.println("[DIAG] CONCLUSION: Verified public HTTPS works but Render fails (Case F)." );
-        Serial.println("[DIAG] NOT a general Wokwi/ESP32 HTTPS failure. Suspect the Render");
-        Serial.println("[DIAG] edge rejecting this specific ClientHello. Distinguish 'the");
-        Serial.println("[DIAG] library supports the primitives' from 'Render accepts the");
-        Serial.println("[DIAG] actual ClientHello' before proposing any TLS change.");
-    } else if (exStatus <= 0 && renderStatus <= 0) {
+    if (vercelStatus > 0) {
+        Serial.println("[DIAG] CONCLUSION: Vercel TLS probe PASSED.");
+        Serial.println("[DIAG] Wokwi CAN complete a verified HTTPS handshake with a Vercel");
+        Serial.println("[DIAG] endpoint. A Vercel HTTPS bridge architecture should be");
+        Serial.println("[DIAG] investigated as the next step.");
+    } else if (vercelStatus <= 0 && exStatus <= 0 && renderStatus <= 0) {
         Serial.println("[DIAG] CONCLUSION: ALL verified HTTPS connections fail (Case B/E).");
         Serial.println("[DIAG] Suspect general Wokwi gateway/network/TLS behavior.");
-    } else if (exStatus > 0 && renderStatus > 0 && postStatus <= 0) {
-        Serial.println("[DIAG] CONCLUSION: TLS/network path works; POST path fails (Case C).");
-        Serial.println("[DIAG] Investigate HTTP POST/auth/backend behavior.");
-    } else if (exStatus > 0 && renderStatus > 0 && postStatus > 0) {
-        Serial.println("[DIAG] CONCLUSION: All tests pass (Case D). Original failure is");
-        Serial.println("[DIAG] intermittent or timing/state dependent. Run the normal");
-        Serial.println("[DIAG] firmware loop and verify actual Supabase telemetry rows.");
+    } else if (vercelStatus <= 0 && exStatus > 0) {
+        Serial.println("[DIAG] CONCLUSION: example.com works but Vercel fails.");
+        Serial.println("[DIAG] The TLS failure is NOT specific to Render. Compare error");
+        Serial.println("[DIAG] codes across example.com, Render, and Vercel probes.");
+    } else if (vercelStatus <= 0 && exStatus <= 0 && renderStatus > 0) {
+        Serial.println("[DIAG] CONCLUSION: Render works but example.com and Vercel fail.");
+        Serial.println("[DIAG] Unusual pattern - investigate further.");
     } else {
         Serial.println("[DIAG] CONCLUSION: Unexpected result combination.");
     }
@@ -472,8 +552,16 @@ bool sendHeartbeat() {
     }
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
+    // Gateway mode (GATEWAY_TOKEN set): send only Bearer token.
+    // Direct Render mode (GATEWAY_TOKEN empty): send X-API-Key as before.
+    // This prevents the Render DEVICE_API_KEY from being transmitted
+    // in plaintext over the Wokwi -> gateway HTTP leg.
+#ifdef GATEWAY_TOKEN
+    if (strlen(GATEWAY_TOKEN) > 0) {
+        http.addHeader("Authorization", String("Bearer ") + GATEWAY_TOKEN);
+    } else
+#endif
 #ifdef DEVICE_API_KEY
-    // Write-gate: backend rejects unauthenticated writes with 401/403.
     if (strlen(DEVICE_API_KEY) > 0) {
         http.addHeader("X-API-Key", DEVICE_API_KEY);
     }
@@ -522,8 +610,16 @@ bool sendTelemetry(const SensorReading& temperature, const SensorReading& vibrat
     }
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
+    // Gateway mode (GATEWAY_TOKEN set): send only Bearer token.
+    // Direct Render mode (GATEWAY_TOKEN empty): send X-API-Key as before.
+    // This prevents the Render DEVICE_API_KEY from being transmitted
+    // in plaintext over the Wokwi -> gateway HTTP leg.
+#ifdef GATEWAY_TOKEN
+    if (strlen(GATEWAY_TOKEN) > 0) {
+        http.addHeader("Authorization", String("Bearer ") + GATEWAY_TOKEN);
+    } else
+#endif
 #ifdef DEVICE_API_KEY
-    // Write-gate: backend rejects unauthenticated writes with 401/403.
     if (strlen(DEVICE_API_KEY) > 0) {
         http.addHeader("X-API-Key", DEVICE_API_KEY);
     }
