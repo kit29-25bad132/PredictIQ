@@ -1,0 +1,10 @@
+﻿{
+  "device_id": "ESP32_001",
+  "machine_id": "TEST-001",
+  "timestamp": "2026-09-17T07:30:00Z",
+  "source": "WOKWI",
+  "temperature": 24.0,
+  "vibration": 0.5,
+  "current": 10.0,
+  "rpm": 1450.0
+}

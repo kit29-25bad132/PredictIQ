@@ -7,14 +7,11 @@
 #define WIFI_SSID "Wokwi-GUEST"
 #define WIFI_PASSWORD ""
 
-// Replace with a publicly reachable FastAPI URL or tunnel URL. For local Wokwi
-// simulation use the developer machine's LAN address: host.wokwi.internal
-// resolves ONLY inside the simulated network (not on the Windows host), and
-// the local gateway path is not available to wokwi-cli runs in this
-// environment. Plain HTTP on the local trusted dev network keeps TLS out of
-// the Phase 4 proof path. Update the octets if the laptop's Wi-Fi address
-// changes (see ipconfig).
-#define API_BASE_URL "https://predictiq-backend-771t.onrender.com"  // Render managed HTTPS (GTS WE1 -> pinned GTS Root R4)
+// Local Wokwi transport: plain HTTP to the local gateway adapter on the
+// developer machine. The gateway forwards to Render over HTTPS.
+// host.wokwi.internal resolves to the host machine from within Wokwi simulations.
+// GATEWAY_TOKEN must be supplied at build time (platformio.ini).
+#define API_BASE_URL "http://host.wokwi.internal:9000"
 //
 // TLS trust anchor for API_BASE_URL (PUBLIC certificate - not a secret):
 // GlobalSign Root CA (RSA-2048, self-signed, 1998-2028), the trust anchor of
@@ -47,36 +44,21 @@
     "HMUfpIBvFSDJ3gyICh3WZlXi/EjJKSZp4A==\n" \
     "-----END CERTIFICATE-----\n"
 
-// TLS trust anchor for TEST 1 of the TLS diagnostic suite (example.com).
-// PUBLIC certificate - not a secret. example.com's chain terminates in a
-// different root from Render's:
-//   leaf example.com -> Cloudflare TLS Issuing ECC CA 3 -> SSL.com TLS Transit ECC CA R2
-//   -> SSL.com TLS ECC Root CA 2022 (self-signed, 2022-2046)
-// Source: local system trust store (ca-bundle.crt), SHA-256 fingerprint verified:
-//   C3:2F:FD:9F:46:F9:36:D1:6C:36:73:99:09:59:43:4B:9A:D6:0A:AF:BB:9E:7C:F3:36:54:F1:44:CC:1B:A1:43
-// TEST 1 keeps certificate verification fully ENABLED with this anchor - it must
-// never fall back to setInsecure() or to Render's GlobalSign anchor.
-#define EXAMPLE_ROOT_CA \
-    "-----BEGIN CERTIFICATE-----\n" \
-    "MIICOjCCAcCgAwIBAgIQFAP1q/s3ixdAW+JDsqXRxDAKBggqhkjOPQQDAzBOMQsw\n" \
-    "CQYDVQQGEwJVUzEYMBYGA1UECgwPU1NMIENvcnBvcmF0aW9uMSUwIwYDVQQDDBxT\n" \
-    "U0wuY29tIFRMUyBFQ0MgUm9vdCBDQSAyMDIyMB4XDTIyMDgyNTE2MzM0OFoXDTQ2\n" \
-    "MDgxOTE2MzM0N1owTjELMAkGA1UEBhMCVVMxGDAWBgNVBAoMD1NTTCBDb3Jwb3Jh\n" \
-    "dGlvbjElMCMGA1UEAwwcU1NMLmNvbSBUTFMgRUNDIFJvb3QgQ0EgMjAyMjB2MBAG\n" \
-    "ByqGSM49AgEGBSuBBAAiA2IABEUpNXP6wrgjzhR9qLFNoFs27iosU8NgCTWyJGYm\n" \
-    "acCzldZdkkAZDsalE3D07xJRKF3nzL35PIXBz5SQySvOkkJYWWf9lCcQZIxPBLFN\n" \
-    "SeR7T5v15wj4A4j3p8OSSxlUgaNjMGEwDwYDVR0TAQH/BAUwAwEB/zAfBgNVHSME\n" \
-    "GDAWgBSJjy+j6CugFFR781a4Jl9nOAuc0DAdBgNVHQ4EFgQUiY8vo+groBRUe/NW\n" \
-    "uCZfZzgLnNAwDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMDA2gAMGUCMFXjIlbp\n" \
-    "15IkWE8elDIPDAI2wv2sdDJO4fscgIijzPvX6yv/N33w7deedWo1dlJF4AIxAMeN\n" \
-    "b0Igj762TVntd00pxCAgRWSGOlDGxK0tk/UYfXLtqc/ErFc2KAhl3zx5Zn6g6g==\n" \
-    "-----END CERTIFICATE-----\n"
-
 // Write-gate credential (DEVICE_API_KEY configured on the backend). Sent as the
 // 'X-API-Key' header on every POST. Leave empty ONLY when the backend has no
 // DEVICE_API_KEY configured (gate disabled with a startup warning).
 #ifndef DEVICE_API_KEY
 #define DEVICE_API_KEY ""
+#endif
+
+// Gateway authentication token. When API_BASE_URL points to the PredictIQ
+// gateway (plain HTTP, because Wokwi TLS is broken), this token is sent as
+// the 'Authorization: Bearer <token>' header. The gateway validates this
+// token server-side and uses its own RENDER_DEVICE_API_KEY to authenticate
+// with the Render backend. NEVER send the Render DEVICE_API_KEY to Wokwi.
+// Leave empty to skip gateway auth (direct Render mode).
+#ifndef GATEWAY_TOKEN
+#define GATEWAY_TOKEN ""
 #endif
 
 #define DEVICE_ID "ESP32_001"

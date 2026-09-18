@@ -9,17 +9,26 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(500);
     Serial.println("\nPredict IQ Wokwi Node");
+    Serial.print("Firmware: ");
+    Serial.println(FIRMWARE_VERSION);
+    Serial.print("API Base URL: ");
+    Serial.println(API_BASE_URL);
+
+    // --- Auth mode diagnostic (no secrets printed) ---
+#ifdef GATEWAY_TOKEN
+    if (strlen(GATEWAY_TOKEN) > 0) {
+        Serial.println("[AUTH] Mode: GATEWAY (Bearer token configured)");
+    } else {
+        Serial.println("[AUTH] WARNING: GATEWAY_TOKEN is empty.");
+        Serial.println("[AUTH] Heartbeat/telemetry will fail with HTTP 401.");
+        Serial.println("[AUTH] Rebuild with: GATEWAY_TOKEN=<token> pio run -e esp32-s3-devkitc-1");
+    }
+#else
+    Serial.println("[AUTH] Mode: DIRECT (using X-API-Key)");
+#endif
 
     initSensors();
     initWiFi();
-
-    // --- TEMPORARY: Run TLS diagnostics once on boot ---
-    if (isWiFiConnected()) {
-        runTlsDiagnostics();
-    } else {
-        Serial.println("[DIAG] WiFi not connected, skipping TLS diagnostics");
-    }
-    // --- END TEMPORARY ---
 
     sendHeartbeat();
 }
