@@ -28,7 +28,29 @@ void initWiFi() {
     Serial.println(" connected");
     Serial.print("[WIFI] IP: ");
     Serial.println(WiFi.localIP());
+
+    // Initiate NTP synchronization (SNTP). configTime() is non-blocking:
+    // it starts the SNTP client but the first response may take several
+    // seconds. Wait with a bounded timeout so the firmware does not send
+    // telemetry with an uninitialized timestamp.
     configTime(UTC_OFFSET_SECONDS, DAYLIGHT_OFFSET_SECONDS, NTP_SERVER);
+
+    Serial.print("[NTP] Syncing with ");
+    Serial.print(NTP_SERVER);
+    Serial.print("...");
+    const unsigned long ntpStart = millis();
+    while (!isTimeSynchronized() && millis() - ntpStart < 30000UL) {
+        delay(500);
+        Serial.print('.');
+    }
+    if (isTimeSynchronized()) {
+        Serial.println(" OK");
+        Serial.print("[NTP] UTC time: ");
+        Serial.println(currentUtcTimestamp());
+    } else {
+        Serial.println(" TIMEOUT (30 s)");
+        Serial.println("[NTP] Telemetry will be skipped until sync completes.");
+    }
 }
 
 void maintainWiFi() {
