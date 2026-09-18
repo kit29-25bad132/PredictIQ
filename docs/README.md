@@ -242,46 +242,222 @@ Prediction service
 ```text
 PredictIQ/
 │
+├── .github/
+│   ├── workflows/
+│   │   └── ci.yml
+│   └── copilot-instructions.md
+│
+├── .harness/
+│   ├── pg_tls_proxy.py
+│   ├── phase05_app.py
+│   └── run_migrations.py
+│
+├── audit/
+│   └── projectv0/
+│       └── predict-iq/
+│           └── V0 frozen reference
+│
 ├── backend/
+│   ├── alembic/
+│   │   ├── env.py
+│   │   └── versions/
+│   │       ├── 001-006 migration files
+│   │       └── ...
+│   │
 │   ├── app/
 │   │   ├── api/
+│   │   │   ├── sensors.py
+│   │   │   ├── machines.py
+│   │   │   ├── alerts.py
+│   │   │   ├── predictions.py
+│   │   │   ├── maintenance.py
+│   │   │   ├── feedback.py
+│   │   │   └── health.py
+│   │   │
 │   │   ├── core/
-│   │   ├── models/
+│   │   │   ├── config.py
+│   │   │   └── auth.py
+│   │   │
+│   │   ├── db/
+│   │   │   ├── database.py
+│   │   │   └── models.py
+│   │   │
 │   │   ├── schemas/
+│   │   │   └── sensor.py
+│   │   │
 │   │   ├── services/
-│   │   └── ...
+│   │   │   ├── health_engine.py
+│   │   │   ├── prediction_service.py
+│   │   │   └── model_evaluation.py
+│   │   │
+│   │   └── main.py
+│   │
 │   ├── tests/
-│   ├── Dockerfile
+│   │   ├── test_*.py
+│   │   └── ...
+│   │
+│   ├── .env.example
+│   ├── alembic.ini
+│   ├── pytest.ini
 │   └── requirements.txt
 │
 ├── frontend/
-│   ├── src/
 │   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   │   ├── DashboardPage.tsx
+│   │   │   ├── MachinesPage.tsx
+│   │   │   ├── MachineDetailsPage.tsx
+│   │   │   ├── LiveMonitoringPage.tsx
+│   │   │   ├── AlertsPage.tsx
+│   │   │   ├── MaintenancePage.tsx
+│   │   │   ├── PredictionsPage.tsx
+│   │   │   ├── SensorDataPage.tsx
+│   │   │   ├── SettingsPage.tsx
+│   │   │   └── FeedbackPage.tsx
+│   │   └── ...
+│   │
 │   ├── package.json
-│   └── vite.config.*
+│   ├── package-lock.json
+│   ├── tsconfig.json
+│   └── ...
 │
 ├── firmware/
+│   │
+│   ├── esp32/
+│   │   ├── predict_iq_esp32.ino
+│   │   ├── config.h
+│   │   ├── sensors.h
+│   │   ├── sensors.cpp
+│   │   ├── api_client.h
+│   │   ├── api_client.cpp
+│   │   ├── wifi_manager.h
+│   │   ├── wifi_manager.cpp
+│   │   ├── platformio.ini
+│   │   └── README.md
+│   │
 │   └── wokwi/
-│       ├── src/
+│       ├── diagram.json
 │       ├── platformio.ini
 │       ├── wokwi.toml
-│       └── ...
+│       ├── src/
+│       │   ├── main.cpp
+│       │   ├── config.h
+│       │   ├── sensors.h
+│       │   ├── sensors.cpp
+│       │   ├── api_client.h
+│       │   ├── api_client.cpp
+│       │   ├── wifi_manager.h
+│       │   └── wifi_manager.cpp
+│       ├── README.md
+│       └── wokwi-debug.txt
+│
+├── ml/
+│   ├── __init__.py
+│   ├── prediction.py
+│   ├── train.py
+│   ├── data_validation.py
+│   ├── feature_engineering.py
+│   ├── explainability.py
+│   ├── recommendation.py
+│   └── models/
+│       ├── __init__.py
+│       └── README.md
 │
 ├── deploy/
-│   └── gateway/
-│       ├── main.py
-│       ├── config.py
-│       ├── Dockerfile
-│       ├── requirements.txt
-│       ├── README.md
-│       ├── DEPLOY-GUIDE.md
-│       ├── .env.example
-│       └── tests/
+│   ├── gateway/
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   ├── .env.example
+│   │   ├── README.md
+│   │   ├── DEPLOY-GUIDE.md
+│   │   └── tests/
+│   │       ├── __init__.py
+│   │       └── test_gateway.py
+│   │
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   ├── Dockerfile.backend
+│   ├── entrypoint.sh
+│   ├── .env.example
+│   ├── README.md
+│   ├── TLS_SETUP.md
+│   └── DEMO_SCENARIOS.md
 │
+├── docs/
+│   ├── 00-PROJECT-CHARTER.md
+│   ├── 01-ARCHITECTURE.md
+│   ├── 02-FEATURES.md
+│   ├── 03-DATA-AND-FEEDBACK.md
+│   ├── 04-IMPLEMENTATION-ROADMAP.md
+│   ├── 05-API-CONTRACT.md
+│   ├── 06-AI-AND-ML-STRATEGY.md
+│   ├── 07-GITHUB-WORKFLOW.md
+│   ├── 08-TESTING-AND-DEMO.md
+│   ├── 09-SECURITY-AND-PRODUCTION.md
+│   ├── 10-DECISIONS.md
+│   ├── 11-DIRECTORY-GUIDE.md
+│   ├── AUDIT-PROJECT-V0.md
+│   ├── README.md
+│   └── V1-MIGRATION-PLAN.md
+│
+├── .env.example
+├── .gitignore
 └── README.md
 ```
 
----
+### Directory Responsibilities
+
+| Directory | Responsibility |
+|---|---|
+| `.github/` | CI/CD workflows and repository-level development configuration |
+| `.harness/` | Runtime/deployment verification utilities and test harnesses |
+| `audit/` | Preserved V0 reference material; not part of the active V1 runtime |
+| `backend/` | FastAPI application, API routes, database access, health engine, prediction services, authentication, and backend tests |
+| `frontend/` | React/Vite web dashboard and user-facing application |
+| `firmware/esp32/` | Real-hardware ESP32 firmware implementation |
+| `firmware/wokwi/` | Wokwi ESP32-S3 simulation firmware and circuit configuration |
+| `ml/` | V1 prediction, feature engineering, validation, explainability, recommendation, and model-training/evaluation logic |
+| `deploy/gateway/` | Local Wokwi-to-cloud transport gateway |
+| `deploy/` | Containerized deployment configuration, demo scenarios, TLS documentation, and deployment utilities |
+| `docs/` | Locked architecture, API, security, testing, AI/ML, roadmap, decision, and project documentation |
+| Root files | Repository configuration, environment template, ignore rules, and project documentation |
+
+### V0 Reference
+
+The frozen V0 implementation is preserved under:
+
+```text
+audit/projectv0/predict-iq/
+```
+
+It is retained as a historical/reference baseline and is not part of the active V1 execution path.
+
+### V1 Runtime Boundary
+
+The active V1 system follows:
+
+```text
+firmware/wokwi
+        │
+        ▼
+deploy/gateway
+        │
+        ▼
+backend
+        │
+        ├──────────────► Supabase PostgreSQL
+        │
+        └──────────────► Gemini AI
+                         │
+                         ▼
+frontend
+```
+
+The `firmware/esp32` directory represents the physical-hardware implementation path that can replace Wokwi when real ESP32 hardware and sensors are available.
 
 ## Telemetry
 
