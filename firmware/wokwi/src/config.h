@@ -7,14 +7,11 @@
 #define WIFI_SSID "Wokwi-GUEST"
 #define WIFI_PASSWORD ""
 
-// Replace with a publicly reachable FastAPI URL or tunnel URL. For local Wokwi
-// simulation use the developer machine's LAN address: host.wokwi.internal
-// resolves ONLY inside the simulated network (not on the Windows host), and
-// the local gateway path is not available to wokwi-cli runs in this
-// environment. Plain HTTP on the local trusted dev network keeps TLS out of
-// the Phase 4 proof path. Update the octets if the laptop's Wi-Fi address
-// changes (see ipconfig).
-#define API_BASE_URL "https://predictiq-backend-771t.onrender.com"  // Render managed HTTPS (GTS WE1 -> pinned GTS Root R4)
+// Local Wokwi transport: plain HTTP to the local gateway adapter on the
+// developer machine. The gateway forwards to Render over HTTPS.
+// host.wokwi.internal resolves to the host machine from within Wokwi simulations.
+// GATEWAY_TOKEN must be supplied at build time (platformio.ini).
+#define API_BASE_URL "http://host.wokwi.internal:9000"
 //
 // TLS trust anchor for API_BASE_URL (PUBLIC certificate - not a secret):
 // GlobalSign Root CA (RSA-2048, self-signed, 1998-2028), the trust anchor of

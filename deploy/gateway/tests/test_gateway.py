@@ -796,3 +796,210 @@ class TestGatewayModeTransport:
             # Gateway uses its own RENDER_DEVICE_API_KEY, not Wokwi's
             assert headers["X-API-Key"] == _TEST_ENV["RENDER_DEVICE_API_KEY"]
             assert headers["X-API-Key"] != "Wokwi-should-not-send-this"
+
+
+# ============================================================================
+# Gateway-mode heartbeat authentication
+# Tests that the gateway requires Bearer token for heartbeat endpoint.
+# ============================================================================
+class TestGatewayHeartbeatAuth:
+    def test_heartbeat_no_auth_returns_401(self, client):
+        """Heartbeat without Authorization header returns 401."""
+        response = client.post(
+            "/api/devices/heartbeat",
+            json={"device_id": "ESP32_001", "machine_id": "TEST-001", "source": "WOKWI"},
+        )
+        assert response.status_code == 401
+
+    def test_heartbeat_wrong_token_returns_403(self, client):
+        """Heartbeat with wrong Bearer token returns 403."""
+        response = client.post(
+            "/api/devices/heartbeat",
+            json={"device_id": "ESP32_001", "machine_id": "TEST-001", "source": "WOKWI"},
+            headers={"Authorization": "Bearer wrong-token-abc"},
+        )
+        assert response.status_code == 403
+
+    def test_heartbeat_valid_token_forwarded(self, client, auth_header):
+        """Heartbeat with valid Bearer token is forwarded upstream."""
+        mock_resp = _mock_upstream_response(200, {"status": "ok"})
+        with patch("main.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_resp
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+
+            response = client.post(
+                "/api/devices/heartbeat",
+                json={"device_id": "ESP32_001", "machine_id": "TEST-001", "source": "WOKWI"},
+                headers=auth_header,
+            )
+
+        assert response.status_code == 200
+        assert mock_client.post.call_count == 1
+
+    def test_heartbeat_upstream_receives_render_api_key(self, client, auth_header):
+        """Upstream Render backend receives X-API-Key, not Wokwi's Bearer token."""
+        mock_resp = _mock_upstream_response(200)
+        with patch("main.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_resp
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+
+            client.post(
+                "/api/devices/heartbeat",
+                json={"device_id": "ESP32_001", "machine_id": "TEST-001", "source": "WOKWI"},
+                headers=auth_header,
+            )
+
+            call_args = mock_client.post.call_args
+            headers = call_args.kwargs.get("headers") or call_args[1].get("headers")
+            assert headers["X-API-Key"] == _TEST_ENV["RENDER_DEVICE_API_KEY"]
+            assert "Authorization" not in headers
+
+
+# ============================================================================
+# Gateway-mode telemetry authentication
+# Tests that the gateway requires Bearer token for telemetry endpoint.
+# ============================================================================
+class TestGatewayTelemetryAuth:
+    def test_telemetry_no_auth_returns_401(self, client):
+        """Telemetry without Authorization header returns 401."""
+        response = client.post(
+            "/api/sensor-data",
+            json={
+                "device_id": "ESP32_001",
+                "machine_id": "TEST-001",
+                "temperature": 25.0,
+                "vibration": 1.0,
+                "current": 10.0,
+                "rpm": 1500.0,
+                "timestamp": "2026-09-17T12:00:00Z",
+                "source": "WOKWI",
+            },
+        )
+        assert response.status_code == 401
+
+    def test_telemetry_wrong_token_returns_403(self, client):
+        """Telemetry with wrong Bearer token returns 403."""
+        response = client.post(
+            "/api/sensor-data",
+            json={
+                "device_id": "ESP32_001",
+                "machine_id": "TEST-001",
+                "temperature": 25.0,
+                "vibration": 1.0,
+                "current": 10.0,
+                "rpm": 1500.0,
+                "timestamp": "2026-09-17T12:00:00Z",
+                "source": "WOKWI",
+            },
+            headers={"Authorization": "Bearer wrong-token-abc"},
+        )
+        assert response.status_code == 403
+
+    def test_telemetry_empty_bearer_returns_401(self, client):
+        """Telemetry with empty Bearer token returns 401."""
+        response = client.post(
+            "/api/sensor-data",
+            json={
+                "device_id": "ESP32_001",
+                "machine_id": "TEST-001",
+                "temperature": 25.0,
+                "vibration": 1.0,
+                "current": 10.0,
+                "rpm": 1500.0,
+                "timestamp": "2026-09-17T12:00:00Z",
+                "source": "WOKWI",
+            },
+            headers={"Authorization": "Bearer "},
+        )
+        assert response.status_code == 401
+
+
+# ============================================================================
+# Timestamp validation tests
+# Tests that the gateway correctly validates timestamps (UTC ISO-8601).
+# ============================================================================
+class TestTimestampValidation:
+    def test_valid_utc_timestamp_accepted(self, client, auth_header, valid_payload):
+        """Valid UTC timestamp with Z suffix is accepted."""
+        mock_resp = _mock_upstream_response(201)
+        with patch("main.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_resp
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+
+            response = client.post(
+                "/api/sensor-data",
+                json=valid_payload,
+                headers=auth_header,
+            )
+        assert response.status_code == 201
+
+    def test_valid_offset_timestamp_accepted(self, client, auth_header, valid_payload):
+        """Valid ISO-8601 timestamp with timezone offset is accepted."""
+        valid_payload["timestamp"] = "2026-09-17T12:00:00+00:00"
+        mock_resp = _mock_upstream_response(201)
+        with patch("main.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_resp
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+
+            response = client.post(
+                "/api/sensor-data",
+                json=valid_payload,
+                headers=auth_header,
+            )
+        assert response.status_code == 201
+
+    def test_missing_timestamp_rejected(self, client, auth_header):
+        """Payload without timestamp is rejected."""
+        payload = {
+            "device_id": "ESP32_001",
+            "machine_id": "TEST-001",
+            "temperature": 25.0,
+            "vibration": 1.0,
+            "current": 10.0,
+            "rpm": 1500.0,
+            "source": "WOKWI",
+        }
+        response = client.post("/api/sensor-data", json=payload, headers=auth_header)
+        assert response.status_code == 400
+        assert "timestamp" in response.json()["detail"]
+
+    def test_invalid_timestamp_rejected(self, client, auth_header, valid_payload):
+        """Non-ISO timestamp string is rejected."""
+        valid_payload["timestamp"] = "not-a-timestamp"
+        response = client.post("/api/sensor-data", json=valid_payload, headers=auth_header)
+        assert response.status_code == 400
+        assert "timestamp" in response.json()["detail"]
+
+    def test_numeric_timestamp_rejected(self, client, auth_header, valid_payload):
+        """Numeric timestamp (e.g. epoch) is rejected - must be ISO-8601 string."""
+        valid_payload["timestamp"] = 1726560000
+        response = client.post("/api/sensor-data", json=valid_payload, headers=auth_header)
+        assert response.status_code == 400
+        assert "timestamp" in response.json()["detail"]
+
+    def test_empty_timestamp_rejected(self, client, auth_header, valid_payload):
+        """Empty timestamp string is rejected."""
+        valid_payload["timestamp"] = ""
+        response = client.post("/api/sensor-data", json=valid_payload, headers=auth_header)
+        assert response.status_code == 400
+
+    def test_naive_timestamp_rejected(self, client, auth_header, valid_payload):
+        """Timestamp without timezone info is rejected."""
+        valid_payload["timestamp"] = "2026-09-17T12:00:00"
+        response = client.post("/api/sensor-data", json=valid_payload, headers=auth_header)
+        assert response.status_code == 400
+        assert "timezone" in response.json()["detail"].lower()
+
+    def test_oversized_timestamp_rejected(self, client, auth_header, valid_payload):
+        """Timestamp exceeding max length is rejected."""
+        valid_payload["timestamp"] = "2026-09-17T12:00:00Z" + "x" * 100
+        response = client.post("/api/sensor-data", json=valid_payload, headers=auth_header)
+        assert response.status_code == 400
