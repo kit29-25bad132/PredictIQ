@@ -42,7 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'sensor-data':
         return 'Sensor Ingestion & PostgreSQL Studio';
       case 'settings':
-        return 'FastAPI & PostgreSQL Architecture';
+        return 'System Status';
       default:
         return 'Predict IQ Dashboard';
     }

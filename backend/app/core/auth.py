@@ -1,43 +1,47 @@
 """
-Predict IQ - Write-Gate Authentication (API key).
+Predict IQ - Write-Gate Authentication (API key) and Operator Session Auth.
 
-Honest, minimal authentication for the V1 prototype posture (docs/09, migration
-plan §9.5): every mutating or device-facing endpoint requires a caller-supplied
-API key that must match the server-configured ``DEVICE_API_KEY``.
+Two independent authentication paths coexist:
 
-Design decisions (kept deliberately small):
+1. **Device auth** (``require_api_key``): every mutating or device-facing
+   endpoint requires a caller-supplied API key that must match the
+   server-configured ``DEVICE_API_KEY``.  This gates ESP32/Wokwi devices and
+   the gateway proxy.
 
-- **One shared key**, not per-user accounts. The deployment template documents
-  ``DEVICE_API_KEY`` as the write-gate secret for both devices and operator
-  tooling. This is a gate against anonymous writes, not a full identity system.
-- **No key configured on the server => gate is OPEN** and a startup warning is
-  logged. This keeps local dev and the existing test suite honest without
-  pretending the API is protected: the compose deployment template always sets
-  a key, and production operators must set one.
-- Failures return ``401 Unauthorized`` (missing) or ``403 Forbidden`` (wrong
-  credential) — never silent success.
-- Comparison uses ``secrets.compare_digest`` to avoid timing oracles.
+2. **Operator session** (``require_operator_session``): the browser SPA
+   authenticates via a signed HttpOnly cookie set by ``POST /api/auth/login``.
+   The cookie never contains secrets readable by JavaScript; it is an
+   HMAC-signed ``session=<expiry>.<signature>`` value validated server-side.
+   This allows browser-initiated operator writes without exposing
+   ``DEVICE_API_KEY``.
 
-Remaining documented limitation (device spoofing): possession of the single
-shared key lets any holder write as ANY ``device_id``. Per-device credentials
-and server-side device registration/ownership checks are out of scope for V1
-and remain a known limitation — see docs/09 and the deployment README.
+Both paths are mutually exclusive — device endpoints use ``require_api_key``
+only, operator endpoints use ``require_operator_session`` only.
 """
 
+import hashlib
+import hmac
 import logging
 import secrets
+import time
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 
 from backend.app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 API_KEY_HEADER = "X-API-Key"
+SESSION_COOKIE_NAME = "predictiq_session"
+SESSION_SIGNED_PREFIX = "session="
 
 _WARNED_UNCONFIGURED = False
 
+
+# ---------------------------------------------------------------------------
+# Device API-key authentication (unchanged)
+# ---------------------------------------------------------------------------
 
 def _warn_unconfigured_once() -> None:
     """Log exactly one startup warning when the write gate is disabled."""
@@ -98,5 +102,116 @@ def api_key_dependency() -> Depends:  # pragma: no cover - typing helper
     return Depends(require_api_key)
 
 
-# Shared dependency instance used by routers.
+# Shared dependency instance used by device-facing routers.
 write_gate = Depends(require_api_key)
+
+
+# ---------------------------------------------------------------------------
+# Operator session authentication (browser cookie)
+# ---------------------------------------------------------------------------
+
+def _sign_session_value(value: str, secret: str) -> str:
+    """HMAC-SHA256 sign a value. Returns hex digest."""
+    return hmac.new(secret.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def create_operator_session_token(ttl_seconds: int, secret: str) -> str:
+    """Create a signed session token: ``<expiry>.<hmac>``."""
+    expiry = int(time.time()) + ttl_seconds
+    payload = str(expiry)
+    sig = _sign_session_value(payload, secret)
+    return f"{payload}.{sig}"
+
+
+def verify_operator_session_token(token: str, secret: str) -> bool:
+    """Verify a signed session token. Returns True if valid and not expired."""
+    try:
+        parts = token.split(".")
+        if len(parts) != 2:
+            return False
+        payload, sig = parts
+        expected_sig = _sign_session_value(payload, secret)
+        if not hmac.compare_digest(sig, expected_sig):
+            return False
+        expiry = int(payload)
+        return time.time() < expiry
+    except (ValueError, TypeError):
+        return False
+
+
+def set_operator_session_cookie(response: Response, token: str, max_age: int, is_production: bool) -> None:
+    """Set the session cookie on the response."""
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=f"{SESSION_SIGNED_PREFIX}{token}",
+        max_age=max_age,
+        httponly=True,
+        secure=is_production,
+        samesite="none" if is_production else "lax",
+        path="/",
+    )
+
+
+def clear_operator_session_cookie(response: Response, is_production: bool) -> None:
+    """Clear the session cookie."""
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        httponly=True,
+        secure=is_production,
+        samesite="none" if is_production else "lax",
+        path="/",
+    )
+
+
+def _extract_session_token(request: Request) -> Optional[str]:
+    """Extract the session token value from the cookie header.
+
+    Starlette's ``set_cookie`` wraps values containing ``=`` in double-quotes
+    (RFC 6265 permits ``DQUOTE *cookie-octet DQUOTE``).  Browsers unquote
+    automatically, but not all HTTP clients do.  We strip surrounding quotes
+    defensively so the ``session=`` prefix match works in every case.
+    """
+    cookie_header = request.headers.get("cookie", "")
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if part.startswith(f"{SESSION_COOKIE_NAME}="):
+            value = part[len(SESSION_COOKIE_NAME) + 1:]
+            if value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
+            if value.startswith(SESSION_SIGNED_PREFIX):
+                return value[len(SESSION_SIGNED_PREFIX):]
+    return None
+
+
+def require_operator_session(request: Request) -> None:
+    """FastAPI dependency enforcing a valid operator session cookie.
+
+    - Missing or invalid cookie -> 401 Unauthorized.
+    - Expired cookie            -> 401 Unauthorized.
+    - Valid cookie              -> passes.
+    """
+    settings = get_settings()
+    secret = settings.operator_session_secret
+
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Operator session authentication is not configured.",
+        )
+
+    token = _extract_session_token(request)
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Operator session required. Log in first.",
+        )
+
+    if not verify_operator_session_token(token, secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Operator session expired or invalid. Log in again.",
+        )
+
+
+# Shared dependency instance used by operator-facing routers.
+operator_gate = Depends(require_operator_session)
