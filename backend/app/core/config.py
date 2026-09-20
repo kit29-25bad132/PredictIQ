@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     device_timeout_seconds: int = 60
     device_api_key: str = ""
 
+    # Operator session (browser write authentication)
+    operator_password: str = ""
+    operator_session_secret: str = ""
+    operator_session_ttl_seconds: int = 86400
+
     # External AI provider (Gemini). Both fail closed: with no key the analyze
     # endpoint returns an explicit configuration error and never fabricates a
     # prediction. The key never enters source code or logs.

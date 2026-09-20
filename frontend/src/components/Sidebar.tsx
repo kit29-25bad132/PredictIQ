@@ -11,7 +11,8 @@ import {
   Settings,
   Radio,
   ShieldCheck,
-  ClipboardCheck
+  ClipboardCheck,
+  LogOut
 } from 'lucide-react';
 
 export type NavTab = 
@@ -34,6 +35,7 @@ interface SidebarProps {
   backendOnline: boolean;
   isMobileOpen: boolean;
   onCloseMobile: () => void;
+  onLogout: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -44,6 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   backendOnline,
   isMobileOpen,
   onCloseMobile,
+  onLogout,
 }) => {
   const navItems = [
     {
@@ -106,10 +109,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'settings' as NavTab,
-      label: 'ESP32 & Settings',
+      label: 'System Status',
       icon: Settings,
-      badge: 'IoT',
-      badgeColor: 'blue',
+      badge: null,
     },
   ];
 
@@ -219,6 +221,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span className="text-cyan-400">Prototype physics-based</span>
             </div>
           </div>
+          <button
+            onClick={onLogout}
+            className="mt-3 flex w-full items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-xs font-medium text-slate-400 hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-300 transition-all"
+          >
+            <LogOut className="h-4 w-4" />
+            <span>Logout</span>
+          </button>
         </div>
       </aside>
     </>

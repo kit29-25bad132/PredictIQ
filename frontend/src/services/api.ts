@@ -1,6 +1,12 @@
 /**
  * Predict IQ - Frontend API Service Layer (PostgreSQL Real-Data Integration)
  * Directly interfaces with FastAPI REST endpoints. Never fabricates or fakes data.
+ *
+ * Two request paths:
+ *   - fetchJson:             read-only requests (no credentials)
+ *   - fetchOperatorJson:     write requests via /api/operator/* (HttpOnly session cookie, credentials: 'include')
+ *
+ * Device auth (X-API-Key) is never sent from the browser.
  */
 
 import {
@@ -90,6 +96,58 @@ class PredictIQApiService {
       console.warn(`[Predict IQ API] Request failed for ${url}:`, err.message || err);
       throw err;
     }
+  }
+
+  /**
+   * Operator-authenticated request: sends credentials cross-origin so the
+   * browser attaches the HttpOnly session cookie. Only used for POST/DELETE
+   * mutations through /api/operator/*.
+   */
+  private async fetchOperatorJson<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    const url = `${this.baseUrl}${endpoint}`;
+    try {
+      const res = await fetch(url, {
+        ...options,
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...options?.headers,
+        },
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        const message = errorBody.detail || errorBody.error || errorBody.message || `HTTP Error ${res.status}: ${res.statusText}`;
+        throw new Error(message);
+      }
+
+      this.isOnline = true;
+      return await res.json();
+    } catch (err: any) {
+      this.isOnline = false;
+      console.warn(`[Predict IQ API] Operator request failed for ${url}:`, err.message || err);
+      throw err;
+    }
+  }
+
+  // =========================================================================
+  // AUTH OPERATOR SESSION
+  // =========================================================================
+  public async login(password: string): Promise<{ success: boolean; message: string }> {
+    return this.fetchOperatorJson<{ success: boolean; message: string }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    });
+  }
+
+  public async logout(): Promise<{ success: boolean; message: string }> {
+    return this.fetchOperatorJson<{ success: boolean; message: string }>('/auth/logout', {
+      method: 'POST',
+    });
+  }
+
+  public async checkSession(): Promise<{ authenticated: boolean; message: string }> {
+    return this.fetchOperatorJson<{ authenticated: boolean; message: string }>('/auth/session');
   }
 
   // =========================================================================
@@ -183,7 +241,7 @@ class PredictIQApiService {
   }
 
   public async registerMachine(data: MachineInputPayload): Promise<Machine> {
-    return this.fetchJson<Machine>('/machines', {
+    return this.fetchOperatorJson<Machine>('/operator/machines', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -197,7 +255,7 @@ class PredictIQApiService {
   }
 
   public async registerDevice(data: { device_id: string; machine_id: string; device_type?: string; firmware_version?: string }): Promise<Device> {
-    return this.fetchJson<Device>('/devices', {
+    return this.fetchOperatorJson<Device>('/operator/devices', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -207,7 +265,7 @@ class PredictIQApiService {
   // 4. REAL SENSOR TELEMETRY (POSTGRESQL INGEST & QUERY)
   // =========================================================================
   public async sendSensorData(data: SensorInputPayload): Promise<{ success: boolean; id: number }> {
-    return this.fetchJson<any>('/sensor-data', {
+    return this.fetchOperatorJson<any>('/operator/sensor-data', {
       method: 'POST',
       body: JSON.stringify({
         device_id: data.device_id,
@@ -247,7 +305,7 @@ class PredictIQApiService {
   }
 
   public async runDirectPrediction(data: SensorInputPayload): Promise<Prediction> {
-    return this.fetchJson<Prediction>('/predict', {
+    return this.fetchOperatorJson<Prediction>('/predict', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -266,7 +324,7 @@ class PredictIQApiService {
   }
 
   public async addMaintenance(data: MaintenanceInputPayload): Promise<MaintenanceRecord> {
-    return this.fetchJson<MaintenanceRecord>('/maintenance', {
+    return this.fetchOperatorJson<MaintenanceRecord>('/operator/maintenance', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -289,13 +347,13 @@ class PredictIQApiService {
   }
 
   public async acknowledgeAlert(alertId: number | string): Promise<Alert> {
-    return this.fetchJson<Alert>(`/alerts/${alertId}/acknowledge`, {
+    return this.fetchOperatorJson<Alert>(`/operator/alerts/${alertId}/acknowledge`, {
       method: 'POST',
     });
   }
 
   public async resolveAlert(alertId: number | string): Promise<Alert> {
-    return this.fetchJson<Alert>(`/alerts/${alertId}/resolve`, {
+    return this.fetchOperatorJson<Alert>(`/operator/alerts/${alertId}/resolve`, {
       method: 'POST',
     });
   }
@@ -313,7 +371,7 @@ class PredictIQApiService {
   }
 
   public async addFeedback(data: FeedbackInputPayload): Promise<FeedbackRecord> {
-    return this.fetchJson<FeedbackRecord>('/feedback', {
+    return this.fetchOperatorJson<FeedbackRecord>('/operator/feedback', {
       method: 'POST',
       body: JSON.stringify(data),
     });
