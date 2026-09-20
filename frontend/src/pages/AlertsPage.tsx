@@ -31,6 +31,7 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchAlerts = async () => {
     setIsLoading(true);
@@ -52,20 +53,22 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
   }, []);
 
   const handleAcknowledge = async (alertId: number | string) => {
+    setActionError(null);
     try {
       await api.acknowledgeAlert(alertId);
       fetchAlerts();
-    } catch (err) {
-      console.error('Acknowledge alert failed:', err);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to acknowledge alert.');
     }
   };
 
   const handleResolve = async (alertId: number | string) => {
+    setActionError(null);
     try {
       await api.resolveAlert(alertId);
       fetchAlerts();
-    } catch (err) {
-      console.error('Resolve alert failed:', err);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to resolve alert.');
     }
   };
 
@@ -170,6 +173,11 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
       </div>
 
       {/* Alerts Feed */}
+      {actionError && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-300">
+          {actionError}
+        </div>
+      )}
       <div className="space-y-3">
         {filteredAlerts.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-800 py-16 text-center">

@@ -36,6 +36,7 @@ export const MaintenancePage: React.FC<MaintenancePageProps> = ({
   const [formAction, setFormAction] = useState<string>('');
   const [formTech, setFormTech] = useState<string>('');
   const [formStatus, setFormStatus] = useState<string>('Completed');
+  const [formError, setFormError] = useState<string | null>(null);
 
   const fetchRecords = async () => {
     try {
@@ -54,6 +55,7 @@ export const MaintenancePage: React.FC<MaintenancePageProps> = ({
     e.preventDefault();
     if (!formIssue.trim() || !formAction.trim()) return;
 
+    setFormError(null);
     try {
       await api.createMaintenanceRecord({
         machine_id: formMachineId,
@@ -69,8 +71,8 @@ export const MaintenancePage: React.FC<MaintenancePageProps> = ({
       setFormIssue('');
       setFormAction('');
       fetchRecords();
-    } catch (err) {
-      console.error('Failed to save maintenance record:', err);
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to save maintenance record.');
     }
   };
 
@@ -304,6 +306,11 @@ export const MaintenancePage: React.FC<MaintenancePageProps> = ({
               </div>
 
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                {formError && (
+                  <div className="flex-1 rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-300">
+                    {formError}
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsAddModalOpen(false)}

@@ -3,6 +3,7 @@ import { Machine, FleetStats, FeedbackContext } from './types';
 import api from './services/api';
 import Sidebar, { NavTab } from './components/Sidebar';
 import Header from './components/Header';
+import LoginScreen from './components/LoginScreen';
 import DashboardPage from './pages/DashboardPage';
 import MachinesPage from './pages/MachinesPage';
 import MachineDetailsPage from './pages/MachineDetailsPage';
@@ -15,9 +16,10 @@ import SensorDataPage from './pages/SensorDataPage';
 import SettingsPage from './pages/SettingsPage';
 import ManualSensorModal from './components/ManualSensorModal';
 import AddMachineModal from './components/AddMachineModal';
-import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 
 export function App() {
+  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [selectedMachineId, setSelectedMachineId] = useState<string>('');
   const [machines, setMachines] = useState<Machine[]>([]);
@@ -50,6 +52,26 @@ export function App() {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 3500);
   };
+
+  // Check session on startup
+  useEffect(() => {
+    api.checkSession()
+      .then((session) => {
+        setAuthState(session.authenticated ? 'authenticated' : 'unauthenticated');
+      })
+      .catch(() => {
+        setAuthState('unauthenticated');
+      });
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      // Logout even if the request fails (e.g. backend unreachable)
+    }
+    setAuthState('unauthenticated');
+  }, []);
 
   // Primary Data Fetcher
   const loadFleetData = useCallback(async () => {
@@ -127,6 +149,22 @@ export function App() {
     }
   };
 
+  // Auth gate
+  if (authState === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
+          <span className="text-sm text-slate-400 font-mono">Checking session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === 'unauthenticated') {
+    return <LoginScreen onAuthenticated={() => setAuthState('authenticated')} />;
+  }
+
   return (
     <div id="predictiq-root" className="flex min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950">
       {/* Sidebar Navigation */}
@@ -138,6 +176,7 @@ export function App() {
         backendOnline={backendOnline}
         isMobileOpen={isMobileNavOpen}
         onCloseMobile={() => setIsMobileNavOpen(false)}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
