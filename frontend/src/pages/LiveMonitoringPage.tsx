@@ -239,82 +239,86 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
         // DEFAULT 2-MINUTE AUTOMATIC CYCLE (Normal -> Warning -> Critical -> Recovery -> Repeat)
         if (cycleSec < 50) {
           // =========================================================================
-          // PHASE 1: 0:00–0:50  NORMAL
-          // Small variations | All values remain strictly normal
+          // PHASE 1: 0:00–0:50  NORMAL (50 seconds)
+          // Small variations | All values remain normal
           // Temp: 25–45 °C | Vib: 0–1.5 m/s² | Curr: 0.2–2.0 A | RPM: 70–100% rated
           // =========================================================================
           phaseLabel = '0:00–0:50 NORMAL';
-          const p = cycleSec / 50;
-          nextTemp = 28.0 + 10.0 * Math.sin(cycleSec * 0.15) + (Math.random() - 0.5) * 1.2;
-          nextTemp = Math.min(44.5, Math.max(25.5, nextTemp));
+          const normProgress = cycleSec / 50; // 0.0 -> 1.0
+          const baseOsc = 31.0 + 3.5 * Math.sin(cycleSec * 0.18) + (Math.random() - 0.5) * 0.4;
+          const preWarm = normProgress > 0.7 ? ((normProgress - 0.7) / 0.3) * 10.0 : 0;
+          nextTemp = Math.min(44.8, Math.max(25.5, baseOsc + preWarm));
 
-          nextVib = 0.6 + 0.4 * Math.sin(cycleSec * 0.4) + (Math.random() - 0.5) * 0.15;
-          nextVib = Math.min(1.45, Math.max(0.1, nextVib));
+          const vibBase = 0.65 + 0.35 * Math.sin(cycleSec * 0.35) + (Math.random() - 0.5) * 0.08;
+          const vibPreRise = normProgress > 0.7 ? ((normProgress - 0.7) / 0.3) * 0.45 : 0;
+          nextVib = Math.min(1.48, Math.max(0.15, vibBase + vibPreRise));
 
-          nextCurr = 1.0 + 0.5 * Math.sin(cycleSec * 0.3) + (Math.random() - 0.5) * 0.1;
-          nextCurr = Math.min(1.95, Math.max(0.3, nextCurr));
+          const currBase = 1.0 + 0.4 * Math.sin(cycleSec * 0.25) + (Math.random() - 0.5) * 0.06;
+          const currPreRise = normProgress > 0.7 ? ((normProgress - 0.7) / 0.3) * 0.50 : 0;
+          nextCurr = Math.min(1.95, Math.max(0.3, currBase + currPreRise));
 
-          const rpmFraction = 0.85 + 0.08 * Math.sin(cycleSec * 0.2) + (Math.random() - 0.5) * 0.02;
+          const rpmFraction = 0.88 + 0.05 * Math.sin(cycleSec * 0.2) - (normProgress > 0.7 ? ((normProgress - 0.7) / 0.3) * 0.15 : 0);
           nextRpm = Math.min(0.98, Math.max(0.72, rpmFraction)) * ratedRpm;
 
         } else if (cycleSec < 60) {
           // =========================================================================
-          // PHASE 2: 0:50–1:00  WARNING
-          // Values gradually enter warning region
+          // PHASE 2: 0:50–1:00  WARNING (10 seconds)
+          // Values smoothly & gradually enter warning region
           // Temp: 45–60 °C | Vib: 1.5–3.0 m/s² | Curr: 2.0–3.0 A | RPM: 50–70% rated
           // =========================================================================
           phaseLabel = '0:50–1:00 WARNING';
           const p = (cycleSec - 50) / 10; // 0.0 -> 1.0
-          nextTemp = 46.0 + 12.5 * p + (Math.random() - 0.5) * 0.6;
-          nextTemp = Math.min(59.5, Math.max(45.2, nextTemp));
+          nextTemp = 45.0 + (59.8 - 45.0) * p + 0.25 * Math.sin(p * Math.PI * 3) + (Math.random() - 0.5) * 0.2;
+          nextTemp = Math.min(59.85, Math.max(45.0, nextTemp));
 
-          nextVib = 1.6 + 1.25 * p + (Math.random() - 0.5) * 0.1;
-          nextVib = Math.min(2.95, Math.max(1.55, nextVib));
+          nextVib = 1.50 + (2.98 - 1.50) * p + 0.04 * Math.sin(p * Math.PI * 3) + (Math.random() - 0.5) * 0.03;
+          nextVib = Math.min(2.98, Math.max(1.50, nextVib));
 
-          nextCurr = 2.1 + 0.8 * p + (Math.random() - 0.5) * 0.08;
-          nextCurr = Math.min(2.95, Math.max(2.05, nextCurr));
+          nextCurr = 2.00 + (2.98 - 2.00) * p + 0.03 * Math.sin(p * Math.PI * 3) + (Math.random() - 0.5) * 0.02;
+          nextCurr = Math.min(2.98, Math.max(2.00, nextCurr));
 
-          const rpmFraction = 0.68 - 0.15 * p + (Math.random() - 0.5) * 0.02;
-          nextRpm = Math.min(0.69, Math.max(0.52, rpmFraction)) * ratedRpm;
+          const rpmFraction = 0.70 - (0.70 - 0.52) * p + (Math.random() - 0.5) * 0.01;
+          nextRpm = Math.min(0.70, Math.max(0.52, rpmFraction)) * ratedRpm;
 
         } else if (cycleSec < 70) {
           // =========================================================================
-          // PHASE 3: 1:00–1:10  CRITICAL
-          // Values remain beyond critical limits | Values continue changing
+          // PHASE 3: 1:00–1:10  CRITICAL (10 seconds)
+          // Values remain beyond critical limits | Continuous dynamic critical fluctuation
           // Temp: >60 °C | Vib: >3.0 m/s² | Curr: >3.0 A | RPM: <50% rated
           // =========================================================================
           phaseLabel = '1:00–1:10 CRITICAL';
           const p = (cycleSec - 60) / 10; // 0.0 -> 1.0
-          nextTemp = 63.0 + 4.5 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.8;
-          nextTemp = Math.max(61.0, nextTemp);
+          nextTemp = 60.5 + 4.5 * Math.sin(p * Math.PI) + 0.4 * Math.sin(p * 12) + (Math.random() - 0.5) * 0.3;
+          nextTemp = Math.max(60.2, nextTemp);
 
-          nextVib = 3.3 + 0.7 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.12;
-          nextVib = Math.max(3.1, nextVib);
+          nextVib = 3.05 + 0.65 * Math.sin(p * Math.PI) + 0.08 * Math.sin(p * 12) + (Math.random() - 0.5) * 0.04;
+          nextVib = Math.max(3.02, nextVib);
 
-          nextCurr = 3.2 + 0.5 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.08;
-          nextCurr = Math.max(3.1, nextCurr);
+          nextCurr = 3.05 + 0.45 * Math.sin(p * Math.PI) + 0.06 * Math.sin(p * 12) + (Math.random() - 0.5) * 0.03;
+          nextCurr = Math.max(3.02, nextCurr);
 
-          const rpmFraction = 0.44 - 0.10 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.02;
-          nextRpm = Math.min(0.48, Math.max(0.25, rpmFraction)) * ratedRpm;
+          const rpmFraction = 0.46 - 0.10 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.01;
+          nextRpm = Math.min(0.48, Math.max(0.32, rpmFraction)) * ratedRpm;
 
         } else {
           // =========================================================================
-          // PHASE 4: 1:10–2:00  RECOVERY
-          // Values gradually return toward normal
+          // PHASE 4: 1:10–2:00  RECOVERY (50 seconds)
+          // Values gradually & smoothly cool down and return toward normal baseline
           // =========================================================================
           phaseLabel = '1:10–2:00 RECOVERY';
           const p = (cycleSec - 70) / 50; // 0.0 -> 1.0
-          nextTemp = 62.0 - (62.0 - 28.0) * p + Math.sin(cycleSec * 0.2) * 0.8;
+          const decay = Math.pow(1 - p, 1.25);
+          nextTemp = 30.0 + (60.5 - 30.0) * decay + 0.35 * Math.sin(cycleSec * 0.25);
           nextTemp = Math.max(25.0, nextTemp);
 
-          nextVib = 3.2 - (3.2 - 0.6) * p + (Math.random() - 0.5) * 0.1;
-          nextVib = Math.max(0.1, nextVib);
+          nextVib = 0.65 + (3.05 - 0.65) * Math.pow(1 - p, 1.3) + 0.04 * Math.sin(cycleSec * 0.4);
+          nextVib = Math.max(0.15, nextVib);
 
-          nextCurr = 3.2 - (3.2 - 1.0) * p + (Math.random() - 0.5) * 0.1;
-          nextCurr = Math.max(0.2, nextCurr);
+          nextCurr = 1.00 + (3.05 - 1.00) * Math.pow(1 - p, 1.3) + 0.03 * Math.sin(cycleSec * 0.3);
+          nextCurr = Math.max(0.3, nextCurr);
 
-          const rpmFraction = 0.40 + (0.85 - 0.40) * p + (Math.random() - 0.5) * 0.02;
-          nextRpm = Math.max(0.35, Math.min(0.95, rpmFraction)) * ratedRpm;
+          const rpmFraction = 0.48 + (0.88 - 0.48) * (1 - Math.pow(1 - p, 1.3)) + (Math.random() - 0.5) * 0.01;
+          nextRpm = Math.max(0.46, Math.min(0.92, rpmFraction)) * ratedRpm;
         }
       }
 
@@ -680,12 +684,20 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                 Limit: {thresholds.tempWarning.toFixed(1)}° / {thresholds.tempCritical.toFixed(1)}°C
               </div>
             </div>
-            <div className="text-right font-mono text-[10px] text-amber-400/60">
-              {instantaneous.temperature >= thresholds.tempCritical
-                ? '🔥 CRITICAL (>60°)'
-                : instantaneous.temperature >= thresholds.tempWarning
-                ? '⚠️ WARNING (45-60°)'
-                : '✅ NORMAL (25-45°)'}
+            <div className="text-right font-mono text-[10px]">
+              {instantaneous.temperature >= thresholds.tempCritical ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/20 px-2 py-0.5 text-rose-400 font-bold border border-rose-500/40 animate-pulse">
+                  🔥 CRITICAL
+                </span>
+              ) : instantaneous.temperature >= thresholds.tempWarning ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-0.5 text-amber-400 font-bold border border-amber-500/40">
+                  ⚠️ WARNING
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-400 font-bold border border-emerald-500/40">
+                  ✅ NORMAL
+                </span>
+              )}
             </div>
           </div>
 
@@ -702,12 +714,20 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                 Limit: {thresholds.vibWarning.toFixed(2)} / {thresholds.vibCritical.toFixed(2)} m/s²
               </div>
             </div>
-            <div className="text-right font-mono text-[10px] text-rose-400/60">
-              {instantaneous.vibration >= thresholds.vibCritical
-                ? '🚨 CRITICAL (>3.0)'
-                : instantaneous.vibration >= thresholds.vibWarning
-                ? '⚠️ WARNING (1.5-3.0)'
-                : '✅ NORMAL (0-1.5)'}
+            <div className="text-right font-mono text-[10px]">
+              {instantaneous.vibration >= thresholds.vibCritical ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/20 px-2 py-0.5 text-rose-400 font-bold border border-rose-500/40 animate-pulse">
+                  🚨 CRITICAL
+                </span>
+              ) : instantaneous.vibration >= thresholds.vibWarning ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-0.5 text-amber-400 font-bold border border-amber-500/40">
+                  ⚠️ WARNING
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-400 font-bold border border-emerald-500/40">
+                  ✅ NORMAL
+                </span>
+              )}
             </div>
           </div>
 
@@ -724,12 +744,20 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                 Limit: {(thresholds.currentWarning || 2.0).toFixed(1)} / {(thresholds.currentCritical || 3.0).toFixed(1)} A
               </div>
             </div>
-            <div className="text-right font-mono text-[10px] text-cyan-400/60">
-              {instantaneous.current >= (thresholds.currentCritical || 3.0)
-                ? '🚨 CRITICAL (>3.0A)'
-                : instantaneous.current >= (thresholds.currentWarning || 2.0)
-                ? '⚠️ WARNING (2-3A)'
-                : '✅ NORMAL (0.2-2A)'}
+            <div className="text-right font-mono text-[10px]">
+              {instantaneous.current >= (thresholds.currentCritical || 3.0) ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/20 px-2 py-0.5 text-rose-400 font-bold border border-rose-500/40 animate-pulse">
+                  🚨 CRITICAL
+                </span>
+              ) : instantaneous.current >= (thresholds.currentWarning || 2.0) ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-0.5 text-amber-400 font-bold border border-amber-500/40">
+                  ⚠️ WARNING
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-400 font-bold border border-emerald-500/40">
+                  ✅ NORMAL
+                </span>
+              )}
             </div>
           </div>
 
@@ -746,8 +774,20 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                 Rated: {thresholds.ratedRpm || 1500} RPM
               </div>
             </div>
-            <div className="text-right font-mono text-[10px] text-purple-400/60">
-              {((instantaneous.rpm / (thresholds.ratedRpm || 1500)) * 100).toFixed(0)}% rated
+            <div className="text-right font-mono text-[10px]">
+              {instantaneous.rpm < (thresholds.ratedRpm || 1500) * 0.5 ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/20 px-2 py-0.5 text-rose-400 font-bold border border-rose-500/40 animate-pulse">
+                  🚨 CRITICAL
+                </span>
+              ) : instantaneous.rpm < (thresholds.ratedRpm || 1500) * 0.7 ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-0.5 text-amber-400 font-bold border border-amber-500/40">
+                  ⚠️ WARNING
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-400 font-bold border border-emerald-500/40">
+                  ✅ NORMAL
+                </span>
+              )}
             </div>
           </div>
         </div>
