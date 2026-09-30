@@ -15,6 +15,7 @@ export interface AudioAlarmConfig {
   intervalMs: number;      // Repeating interval period (e.g., 700ms)
   volume: number;          // 0.0 to 1.0 (e.g., 0.8)
   soundEnabled: boolean;   // Global sound enable toggle
+  alarmOnWarning?: boolean; // Also beep when temperature/vibration reaches warning threshold
 }
 
 export const DEFAULT_AUDIO_CONFIG: AudioAlarmConfig = {
@@ -23,9 +24,11 @@ export const DEFAULT_AUDIO_CONFIG: AudioAlarmConfig = {
   intervalMs: 700,
   volume: 0.75,
   soundEnabled: true,
+  alarmOnWarning: true,    // Enabled by default so any temperature rise produces alert sound
 };
 
 export type AudioState = 'unsupported' | 'suspended' | 'running' | 'muted';
+export type AlarmToneType = 'critical' | 'warning';
 
 class AudioAlarmService {
   private audioCtx: AudioContext | null = null;
@@ -211,15 +214,18 @@ class AudioAlarmService {
     }
   }
 
+  private currentToneType: AlarmToneType = 'critical';
+
   /**
    * Starts the continuous repeating beep alarm loop.
    * Idempotent: Does not create duplicate loops if already active.
    */
-  public startAlarm(): void {
+  public startAlarm(toneType: AlarmToneType = 'critical'): void {
     if (!this.config.soundEnabled) {
       return;
     }
 
+    this.currentToneType = toneType;
     this.isAlarmPlaying = true;
     this.isMuted = false;
 
@@ -240,10 +246,14 @@ class AudioAlarmService {
       this.intervalTimerId = null;
     }
 
+    const freq = this.currentToneType === 'warning' ? Math.round(this.config.frequency * 0.75) : this.config.frequency;
+    const interval = this.currentToneType === 'warning' ? Math.max(400, Math.round(this.config.intervalMs * 1.6)) : Math.max(200, this.config.intervalMs);
+    const duration = this.currentToneType === 'warning' ? Math.round(this.config.pulseDurationMs * 1.2) : this.config.pulseDurationMs;
+
     // Play immediate first pulse
     const ctx = this.getOrCreateAudioContext();
     if (ctx && ctx.state === 'running' && !this.isMuted) {
-      this.emitSingleBeepPulse(ctx, this.config.frequency, this.config.pulseDurationMs, this.config.volume);
+      this.emitSingleBeepPulse(ctx, freq, duration, this.config.volume);
     }
 
     // Schedule continuous repeating pulses
@@ -254,9 +264,9 @@ class AudioAlarmService {
       }
       const activeCtx = this.getOrCreateAudioContext();
       if (activeCtx && activeCtx.state === 'running') {
-        this.emitSingleBeepPulse(activeCtx, this.config.frequency, this.config.pulseDurationMs, this.config.volume);
+        this.emitSingleBeepPulse(activeCtx, freq, duration, this.config.volume);
       }
-    }, Math.max(200, this.config.intervalMs));
+    }, interval);
   }
 
   private stopAlarmLoopOnly(): void {

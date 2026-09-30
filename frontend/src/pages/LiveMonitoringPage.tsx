@@ -45,7 +45,7 @@ interface LiveMonitoringPageProps {
 }
 
 type ActiveChannel = 'all' | 'vibration' | 'temperature' | 'current' | 'rpm';
-type WaveSimulationMode = 'normal' | 'harmonic' | 'bearing_fault' | 'thermal_rise' | 'load_surge';
+type WaveSimulationMode = 'normal' | 'harmonic' | 'bearing_fault' | 'thermal_rise' | 'minute_ramp' | 'load_surge';
 
 interface LiveWavePoint {
   index: number;
@@ -191,59 +191,137 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
   useEffect(() => {
     if (!isStreaming) return;
 
+    const ratedRpm = thresholds.ratedRpm || 1500;
+
     const interval = setInterval(() => {
       tickCounterRef.current += 1;
       const t = tickCounterRef.current;
       const now = new Date();
       const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-      // Apply physics modulation based on selected scenario
-      let vibDelta = 0;
-      let tempDelta = 0;
-      let currDelta = 0;
-      let rpmDelta = 0;
+      // =========================================================================
+      // 2:00 MINUTE (120-SECOND) TIMELINE SIMULATION CYCLE ENGINE
+      // 0:00–0:50 NORMAL   | 0:50–1:00 WARNING | 1:00–1:10 CRITICAL | 1:10–2:00 RECOVERY
+      // =========================================================================
+      const cyclePeriodSec = 120; // 2 minutes repeat loop
+      const elapsedSeconds = (t * (streamIntervalMs / 1000));
+      const cycleSec = elapsedSeconds % cyclePeriodSec;
 
-      if (simulationMode === 'normal') {
-        // Natural realistic micro-oscillations
-        vibDelta =
-          Math.sin(t * 0.45) * 0.55 +
-          Math.sin(t * 1.6) * 0.3 +
-          Math.cos(t * 3.2) * 0.15 +
-          (Math.random() - 0.5) * 0.2;
-        tempDelta = Math.sin(t * 0.08) * 0.8 + Math.cos(t * 0.03) * 0.4;
-        currDelta = Math.sin(t * 0.35) * 0.35 + (Math.random() - 0.5) * 0.15;
-        rpmDelta = Math.sin(t * 0.9) * 12 + (Math.random() - 0.5) * 6;
-      } else if (simulationMode === 'harmonic') {
-        // Resonance standing wave
-        vibDelta = Math.sin(t * 0.8) * 1.8 + Math.sin(t * 2.4) * 0.8 + (Math.random() - 0.5) * 0.3;
-        tempDelta = Math.sin(t * 0.1) * 1.2;
-        currDelta = Math.sin(t * 0.8) * 0.8;
-        rpmDelta = Math.sin(t * 1.5) * 25;
+      let nextTemp = 32.0;
+      let nextVib = 0.8;
+      let nextCurr = 1.1;
+      let nextRpm = 0.85 * ratedRpm;
+      let phaseLabel = '0:00–0:50 NORMAL';
+
+      if (simulationMode === 'harmonic') {
+        // Continuous harmonic resonance mode
+        const vibDelta = Math.sin(t * 0.8) * 1.4 + Math.sin(t * 2.4) * 0.6 + (Math.random() - 0.5) * 0.2;
+        const tempDelta = Math.sin(t * 0.1) * 8.0;
+        const currDelta = Math.sin(t * 0.8) * 0.6;
+        const rpmDelta = Math.sin(t * 1.5) * 20;
+
+        nextVib = Math.min(2.9, Math.max(0.2, 1.2 + vibDelta));
+        nextTemp = Math.min(58, Math.max(30, 42.0 + tempDelta));
+        nextCurr = Math.min(2.8, Math.max(0.5, 1.6 + currDelta));
+        nextRpm = Math.min(ratedRpm * 0.95, Math.max(ratedRpm * 0.55, 0.75 * ratedRpm + rpmDelta));
+        phaseLabel = 'HARMONIC RESONANCE';
       } else if (simulationMode === 'bearing_fault') {
         // High-impulse critical spikes
         const isSpike = t % 5 === 0;
-        vibDelta = (isSpike ? 2.8 : 0.6) * Math.sin(t * 1.5) + (Math.random() - 0.5) * 0.6;
-        tempDelta = Math.sin(t * 0.1) * 2.0;
-        currDelta = Math.sin(t * 0.5) * 0.6;
-        rpmDelta = (Math.random() - 0.5) * 20;
-      } else if (simulationMode === 'thermal_rise') {
-        // Thermal climb curve
-        tempDelta = Math.min(15, (t % 40) * 0.35) + Math.sin(t * 0.2) * 0.5;
-        vibDelta = Math.sin(t * 0.5) * 0.6;
-        currDelta = (t % 40) * 0.08;
-        rpmDelta = (Math.random() - 0.5) * 10;
-      } else if (simulationMode === 'load_surge') {
-        // Heavy motor load surge
-        currDelta = Math.sin(t * 0.4) * 2.5 + 1.2;
-        vibDelta = Math.sin(t * 0.7) * 1.1;
-        tempDelta = Math.sin(t * 0.1) * 1.5;
-        rpmDelta = -Math.abs(Math.sin(t * 0.4) * 50);
+        const vibDelta = (isSpike ? 2.5 : 0.4) * Math.sin(t * 1.5) + (Math.random() - 0.5) * 0.4;
+        const tempDelta = Math.sin(t * 0.1) * 12.0;
+        nextVib = Math.max(3.2, 3.1 + vibDelta);
+        nextTemp = Math.max(61.0, 58.0 + tempDelta);
+        nextCurr = Math.max(3.1, 2.8 + Math.sin(t * 0.5) * 0.6);
+        nextRpm = Math.min(ratedRpm * 0.48, 0.45 * ratedRpm + (Math.random() - 0.5) * 30);
+        phaseLabel = '1:00–1:10 CRITICAL SPIKES';
+      } else {
+        // DEFAULT 2-MINUTE AUTOMATIC CYCLE (Normal -> Warning -> Critical -> Recovery -> Repeat)
+        if (cycleSec < 50) {
+          // =========================================================================
+          // PHASE 1: 0:00–0:50  NORMAL
+          // Small variations | All values remain strictly normal
+          // Temp: 25–45 °C | Vib: 0–1.5 m/s² | Curr: 0.2–2.0 A | RPM: 70–100% rated
+          // =========================================================================
+          phaseLabel = '0:00–0:50 NORMAL';
+          const p = cycleSec / 50;
+          nextTemp = 28.0 + 10.0 * Math.sin(cycleSec * 0.15) + (Math.random() - 0.5) * 1.2;
+          nextTemp = Math.min(44.5, Math.max(25.5, nextTemp));
+
+          nextVib = 0.6 + 0.4 * Math.sin(cycleSec * 0.4) + (Math.random() - 0.5) * 0.15;
+          nextVib = Math.min(1.45, Math.max(0.1, nextVib));
+
+          nextCurr = 1.0 + 0.5 * Math.sin(cycleSec * 0.3) + (Math.random() - 0.5) * 0.1;
+          nextCurr = Math.min(1.95, Math.max(0.3, nextCurr));
+
+          const rpmFraction = 0.85 + 0.08 * Math.sin(cycleSec * 0.2) + (Math.random() - 0.5) * 0.02;
+          nextRpm = Math.min(0.98, Math.max(0.72, rpmFraction)) * ratedRpm;
+
+        } else if (cycleSec < 60) {
+          // =========================================================================
+          // PHASE 2: 0:50–1:00  WARNING
+          // Values gradually enter warning region
+          // Temp: 45–60 °C | Vib: 1.5–3.0 m/s² | Curr: 2.0–3.0 A | RPM: 50–70% rated
+          // =========================================================================
+          phaseLabel = '0:50–1:00 WARNING';
+          const p = (cycleSec - 50) / 10; // 0.0 -> 1.0
+          nextTemp = 46.0 + 12.5 * p + (Math.random() - 0.5) * 0.6;
+          nextTemp = Math.min(59.5, Math.max(45.2, nextTemp));
+
+          nextVib = 1.6 + 1.25 * p + (Math.random() - 0.5) * 0.1;
+          nextVib = Math.min(2.95, Math.max(1.55, nextVib));
+
+          nextCurr = 2.1 + 0.8 * p + (Math.random() - 0.5) * 0.08;
+          nextCurr = Math.min(2.95, Math.max(2.05, nextCurr));
+
+          const rpmFraction = 0.68 - 0.15 * p + (Math.random() - 0.5) * 0.02;
+          nextRpm = Math.min(0.69, Math.max(0.52, rpmFraction)) * ratedRpm;
+
+        } else if (cycleSec < 70) {
+          // =========================================================================
+          // PHASE 3: 1:00–1:10  CRITICAL
+          // Values remain beyond critical limits | Values continue changing
+          // Temp: >60 °C | Vib: >3.0 m/s² | Curr: >3.0 A | RPM: <50% rated
+          // =========================================================================
+          phaseLabel = '1:00–1:10 CRITICAL';
+          const p = (cycleSec - 60) / 10; // 0.0 -> 1.0
+          nextTemp = 63.0 + 4.5 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.8;
+          nextTemp = Math.max(61.0, nextTemp);
+
+          nextVib = 3.3 + 0.7 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.12;
+          nextVib = Math.max(3.1, nextVib);
+
+          nextCurr = 3.2 + 0.5 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.08;
+          nextCurr = Math.max(3.1, nextCurr);
+
+          const rpmFraction = 0.44 - 0.10 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.02;
+          nextRpm = Math.min(0.48, Math.max(0.25, rpmFraction)) * ratedRpm;
+
+        } else {
+          // =========================================================================
+          // PHASE 4: 1:10–2:00  RECOVERY
+          // Values gradually return toward normal
+          // =========================================================================
+          phaseLabel = '1:10–2:00 RECOVERY';
+          const p = (cycleSec - 70) / 50; // 0.0 -> 1.0
+          nextTemp = 62.0 - (62.0 - 28.0) * p + Math.sin(cycleSec * 0.2) * 0.8;
+          nextTemp = Math.max(25.0, nextTemp);
+
+          nextVib = 3.2 - (3.2 - 0.6) * p + (Math.random() - 0.5) * 0.1;
+          nextVib = Math.max(0.1, nextVib);
+
+          nextCurr = 3.2 - (3.2 - 1.0) * p + (Math.random() - 0.5) * 0.1;
+          nextCurr = Math.max(0.2, nextCurr);
+
+          const rpmFraction = 0.40 + (0.85 - 0.40) * p + (Math.random() - 0.5) * 0.02;
+          nextRpm = Math.max(0.35, Math.min(0.95, rpmFraction)) * ratedRpm;
+        }
       }
 
-      const nextVib = Math.max(0.1, Number((baseMetrics.baseVib + vibDelta).toFixed(2)));
-      const nextTemp = Math.max(10, Number((baseMetrics.baseTemp + tempDelta).toFixed(1)));
-      const nextCurr = Math.max(0, Number((baseMetrics.baseCurr + currDelta).toFixed(1)));
-      const nextRpm = Math.max(0, Number((baseMetrics.baseRpm + rpmDelta).toFixed(0)));
+      nextTemp = Number(nextTemp.toFixed(1));
+      nextVib = Number(nextVib.toFixed(2));
+      nextCurr = Number(nextCurr.toFixed(2));
+      nextRpm = Number(nextRpm.toFixed(0));
 
       const newPoint: LiveWavePoint = {
         index: t,
@@ -281,7 +359,7 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
           {
             id: `PKT-${Date.now()}-${t}`,
             time: timeStr,
-            text: `[POSTGRESQL] ${selectedMachineId} -> Temp: ${nextTemp}°C, Vib: ${nextVib} mm/s RMS, Curr: ${nextCurr}A, RPM: ${nextRpm}`,
+            text: `[POSTGRESQL] ${selectedMachineId} -> Temp: ${nextTemp}°C, Vib: ${nextVib} m/s², Curr: ${nextCurr}A, RPM: ${nextRpm} (${phaseLabel})`,
             source: 'ESP32 / TELEMETRY_STREAM',
             status: isCrit ? 'CRITICAL' : isWarn ? 'WARNING' : 'OK',
           },
@@ -291,7 +369,7 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
     }, streamIntervalMs);
 
     return () => clearInterval(interval);
-  }, [isStreaming, streamIntervalMs, sampleLimit, simulationMode, baseMetrics, thresholds, selectedMachineId]);
+  }, [isStreaming, streamIntervalMs, sampleLimit, simulationMode, thresholds, selectedMachineId]);
 
   // Compute live waveform analysis metrics from the active rolling buffer
   const analysisMetrics = useMemo(() => {
@@ -603,7 +681,11 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
               </div>
             </div>
             <div className="text-right font-mono text-[10px] text-amber-400/60">
-              {analysisMetrics.tempTrend >= 0 ? '▲ Rising' : '▼ Cooling'}
+              {instantaneous.temperature >= thresholds.tempCritical
+                ? '🔥 CRITICAL (>60°)'
+                : instantaneous.temperature >= thresholds.tempWarning
+                ? '⚠️ WARNING (45-60°)'
+                : '✅ NORMAL (25-45°)'}
             </div>
           </div>
 
@@ -611,17 +693,21 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
           <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 flex items-center justify-between transition-all">
             <div className="space-y-0.5">
               <div className="text-[10px] uppercase font-bold tracking-wider text-rose-400/80 flex items-center gap-1">
-                <Activity className="h-3 w-3" /> Vibration RMS
+                <Activity className="h-3 w-3" /> Vibration
               </div>
               <div className="text-2xl font-mono font-bold text-rose-300">
-                {fmt(instantaneous.vibration, 2)} mm/s
+                {fmt(instantaneous.vibration, 2)} m/s²
               </div>
               <div className="text-[10px] text-slate-400">
-                Limit: {thresholds.vibWarning.toFixed(2)} / {thresholds.vibCritical.toFixed(2)} mm/s
+                Limit: {thresholds.vibWarning.toFixed(2)} / {thresholds.vibCritical.toFixed(2)} m/s²
               </div>
             </div>
             <div className="text-right font-mono text-[10px] text-rose-400/60">
-              Pk: {fmt(analysisMetrics.vibrationPeak, 2)}
+              {instantaneous.vibration >= thresholds.vibCritical
+                ? '🚨 CRITICAL (>3.0)'
+                : instantaneous.vibration >= thresholds.vibWarning
+                ? '⚠️ WARNING (1.5-3.0)'
+                : '✅ NORMAL (0-1.5)'}
             </div>
           </div>
 
@@ -634,10 +720,16 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
               <div className="text-2xl font-mono font-bold text-cyan-300">
                 {fmt(instantaneous.current)} A
               </div>
-              <div className="text-[10px] text-slate-400">ACS712 Sensor Bus</div>
+              <div className="text-[10px] text-slate-400">
+                Limit: {(thresholds.currentWarning || 2.0).toFixed(1)} / {(thresholds.currentCritical || 3.0).toFixed(1)} A
+              </div>
             </div>
             <div className="text-right font-mono text-[10px] text-cyan-400/60">
-              Rated: 15.0A
+              {instantaneous.current >= (thresholds.currentCritical || 3.0)
+                ? '🚨 CRITICAL (>3.0A)'
+                : instantaneous.current >= (thresholds.currentWarning || 2.0)
+                ? '⚠️ WARNING (2-3A)'
+                : '✅ NORMAL (0.2-2A)'}
             </div>
           </div>
 
@@ -650,10 +742,12 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
               <div className="text-2xl font-mono font-bold text-purple-300">
                 {fmt(instantaneous.rpm, 0)} RPM
               </div>
-              <div className="text-[10px] text-slate-400">Target: 1450 RPM</div>
+              <div className="text-[10px] text-slate-400">
+                Rated: {thresholds.ratedRpm || 1500} RPM
+              </div>
             </div>
             <div className="text-right font-mono text-[10px] text-purple-400/60">
-              Slip: {(100 - (instantaneous.rpm / 1500) * 100).toFixed(1)}%
+              {((instantaneous.rpm / (thresholds.ratedRpm || 1500)) * 100).toFixed(0)}% rated
             </div>
           </div>
         </div>
@@ -684,10 +778,10 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                 <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} />
                 
-                {/* Left Y Axis for Vibration (mm/s) & Current (A) */}
-                <YAxis yAxisId="left" stroke="#64748b" fontSize={11} tickLine={false} domain={[0, 'auto']} />
+                {/* Left Y Axis for Vibration (m/s²) & Current (A) */}
+                <YAxis yAxisId="left" stroke="#64748b" fontSize={11} tickLine={false} domain={[0, 6]} unit=" m/s²" />
                 {/* Right Y Axis for Temperature (°C) */}
-                <YAxis yAxisId="right" orientation="right" stroke="#f59e0b" fontSize={11} tickLine={false} unit="°C" domain={[0, 100]} />
+                <YAxis yAxisId="right" orientation="right" stroke="#f59e0b" fontSize={11} tickLine={false} unit="°C" domain={[20, 80]} />
 
                 <Tooltip
                   contentStyle={{
@@ -701,22 +795,40 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
 
                 {/* Reference Critical & Warning Threshold Lines */}
                 {(activeChannel === 'all' || activeChannel === 'vibration') && (
-                  <ReferenceLine
-                    yAxisId="left"
-                    y={thresholds.vibCritical}
-                    stroke="#ef4444"
-                    strokeDasharray="4 4"
-                    label={{ value: `Crit Vib (${thresholds.vibCritical} mm/s)`, fill: '#ef4444', fontSize: 10 }}
-                  />
+                  <>
+                    <ReferenceLine
+                      yAxisId="left"
+                      y={thresholds.vibWarning}
+                      stroke="#eab308"
+                      strokeDasharray="3 3"
+                      label={{ value: `Warn Vib (${thresholds.vibWarning} m/s²)`, fill: '#eab308', fontSize: 10 }}
+                    />
+                    <ReferenceLine
+                      yAxisId="left"
+                      y={thresholds.vibCritical}
+                      stroke="#ef4444"
+                      strokeDasharray="4 4"
+                      label={{ value: `Crit Vib (${thresholds.vibCritical} m/s²)`, fill: '#ef4444', fontSize: 10 }}
+                    />
+                  </>
                 )}
                 {(activeChannel === 'all' || activeChannel === 'temperature') && (
-                  <ReferenceLine
-                    yAxisId="right"
-                    y={thresholds.tempCritical}
-                    stroke="#f97316"
-                    strokeDasharray="4 4"
-                    label={{ value: `Crit Temp (${thresholds.tempCritical}°C)`, fill: '#f97316', fontSize: 10 }}
-                  />
+                  <>
+                    <ReferenceLine
+                      yAxisId="right"
+                      y={thresholds.tempWarning}
+                      stroke="#f59e0b"
+                      strokeDasharray="3 3"
+                      label={{ value: `Warn Temp (${thresholds.tempWarning}°C)`, fill: '#f59e0b', fontSize: 10 }}
+                    />
+                    <ReferenceLine
+                      yAxisId="right"
+                      y={thresholds.tempCritical}
+                      stroke="#f97316"
+                      strokeDasharray="4 4"
+                      label={{ value: `Crit Temp (${thresholds.tempCritical}°C)`, fill: '#f97316', fontSize: 10 }}
+                    />
+                  </>
                 )}
 
                 {/* Vibration Wave */}
@@ -725,7 +837,7 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                     yAxisId="left"
                     type="monotone"
                     dataKey="vibration"
-                    name="Vibration (mm/s)"
+                    name="Vibration (m/s²)"
                     stroke="#f43f5e"
                     strokeWidth={2.5}
                     fill="url(#vibGradLive)"
@@ -742,7 +854,7 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                     dataKey="temperature"
                     name="Temperature (°C)"
                     stroke="#f59e0b"
-                    strokeWidth={2}
+                    strokeWidth={2.5}
                     fill="url(#tempGradLive)"
                     dot={false}
                     isAnimationActive={false}
@@ -846,24 +958,99 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
           </ResponsiveContainer>
         </div>
 
+        {/* 2-Minute Simulation Timeline & Phase Quick-Jump Controls */}
+        <div className="space-y-2 pt-3 border-t border-slate-800/80">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-cyan-400" />
+              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                2-Minute Simulation Cycle (0:00 – 2:00 Loop):
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-cyan-300 font-bold bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
+              Loop Period: 120s (Auto-Repeats at 2:00)
+            </span>
+          </div>
+
+          {/* Phase Quick-Jump Buttons */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {/* Phase 1: 0:00-0:50 NORMAL */}
+            <button
+              onClick={() => {
+                tickCounterRef.current = 0;
+                setSimulationMode('normal');
+              }}
+              className="flex flex-col items-start p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/20 hover:bg-emerald-900/30 text-left transition-all group"
+            >
+              <div className="flex items-center justify-between w-full">
+                <span className="text-xs font-bold text-emerald-400">0:00–0:50 NORMAL</span>
+                <span className="text-[10px] font-mono text-emerald-300/70">50s</span>
+              </div>
+              <span className="text-[10px] text-slate-400 mt-1">
+                Temp: 25–45°C &bull; Vib: 0–1.5 m/s² &bull; Curr: 0.2–2A &bull; RPM: 70–100%
+              </span>
+            </button>
+
+            {/* Phase 2: 0:50-1:00 WARNING */}
+            <button
+              onClick={() => {
+                tickCounterRef.current = Math.round(50 * (1000 / streamIntervalMs));
+                setSimulationMode('normal');
+              }}
+              className="flex flex-col items-start p-2.5 rounded-xl border border-amber-500/30 bg-amber-950/20 hover:bg-amber-900/30 text-left transition-all group"
+            >
+              <div className="flex items-center justify-between w-full">
+                <span className="text-xs font-bold text-amber-400">0:50–1:00 WARNING</span>
+                <span className="text-[10px] font-mono text-amber-300/70">10s</span>
+              </div>
+              <span className="text-[10px] text-slate-400 mt-1">
+                Temp: 45–60°C &bull; Vib: 1.5–3.0 m/s² &bull; Curr: 2–3A &bull; RPM: 50–70%
+              </span>
+            </button>
+
+            {/* Phase 3: 1:00-1:10 CRITICAL */}
+            <button
+              onClick={() => {
+                tickCounterRef.current = Math.round(60 * (1000 / streamIntervalMs));
+                setSimulationMode('normal');
+              }}
+              className="flex flex-col items-start p-2.5 rounded-xl border border-rose-500/40 bg-rose-950/30 hover:bg-rose-900/40 text-left transition-all group"
+            >
+              <div className="flex items-center justify-between w-full">
+                <span className="text-xs font-bold text-rose-400">1:00–1:10 CRITICAL</span>
+                <span className="text-[10px] font-mono text-rose-300/70">10s</span>
+              </div>
+              <span className="text-[10px] text-slate-400 mt-1">
+                Temp: &gt;60°C &bull; Vib: &gt;3.0 m/s² &bull; Curr: &gt;3A &bull; RPM: &lt;50%
+              </span>
+            </button>
+
+            {/* Phase 4: 1:10-2:00 RECOVERY */}
+            <button
+              onClick={() => {
+                tickCounterRef.current = Math.round(70 * (1000 / streamIntervalMs));
+                setSimulationMode('normal');
+              }}
+              className="flex flex-col items-start p-2.5 rounded-xl border border-cyan-500/30 bg-cyan-950/20 hover:bg-cyan-900/30 text-left transition-all group"
+            >
+              <div className="flex items-center justify-between w-full">
+                <span className="text-xs font-bold text-cyan-400">1:10–2:00 RECOVERY</span>
+                <span className="text-[10px] font-mono text-cyan-300/70">50s</span>
+              </div>
+              <span className="text-[10px] text-slate-400 mt-1">
+                Values gradually cool down and return toward normal baseline
+              </span>
+            </button>
+          </div>
+        </div>
+
         {/* Live Wave Simulation & Scenario Injector */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80">
           <div className="flex items-center gap-2">
-            <SlidersHorizontal className="h-4 w-4 text-cyan-400" />
-            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Live Wave Dynamics:</span>
+            <span className="text-xs font-bold text-slate-400">Other Wave Patterns:</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setSimulationMode('normal')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
-                simulationMode === 'normal'
-                  ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40 shadow-sm'
-                  : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
-              }`}
-            >
-              🟢 Normal Sine Wave
-            </button>
             <button
               onClick={() => setSimulationMode('harmonic')}
               className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
@@ -883,26 +1070,6 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
               }`}
             >
               ⚠️ Vibration Spikes
-            </button>
-            <button
-              onClick={() => setSimulationMode('thermal_rise')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
-                simulationMode === 'thermal_rise'
-                  ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 shadow-sm'
-                  : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
-              }`}
-            >
-              🔥 Thermal Climb
-            </button>
-            <button
-              onClick={() => setSimulationMode('load_surge')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
-                simulationMode === 'load_surge'
-                  ? 'bg-purple-500/20 text-purple-300 font-bold border border-purple-500/40 shadow-sm'
-                  : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
-              }`}
-            >
-              ⚡ Load Surge
             </button>
             <button
               onClick={initializeBuffer}

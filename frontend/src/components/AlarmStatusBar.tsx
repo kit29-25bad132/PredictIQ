@@ -189,7 +189,7 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
             )}
 
             {/* 2. Primary MUTE / STOP ALARM Button */}
-            {isAlarmActive && (
+            {(isAlarmActive || (hasWarningsOnly && isAudioPlaying) || isAudioMuted) && (
               <>
                 {isAudioMuted ? (
                   <button

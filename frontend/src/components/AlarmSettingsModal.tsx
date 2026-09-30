@@ -38,11 +38,15 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
   const [tempCrit, setTempCrit] = useState<number>(thresholds.tempCritical);
   const [vibWarn, setVibWarn] = useState<number>(thresholds.vibWarning);
   const [vibCrit, setVibCrit] = useState<number>(thresholds.vibCritical);
+  const [currWarn, setCurrWarn] = useState<number>(thresholds.currentWarning || 2.0);
+  const [currCrit, setCurrCrit] = useState<number>(thresholds.currentCritical || 3.0);
+  const [ratedRpm, setRatedRpm] = useState<number>(thresholds.ratedRpm || 1500);
 
   const [frequency, setFrequency] = useState<number>(audioSettings.frequency);
   const [intervalMs, setIntervalMs] = useState<number>(audioSettings.intervalMs);
   const [volume, setVolume] = useState<number>(audioSettings.volume);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(audioSettings.soundEnabled);
+  const [alarmOnWarning, setAlarmOnWarning] = useState<boolean>(audioSettings.alarmOnWarning !== false);
 
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
@@ -54,10 +58,14 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
       setTempCrit(thresholds.tempCritical);
       setVibWarn(thresholds.vibWarning);
       setVibCrit(thresholds.vibCritical);
+      setCurrWarn(thresholds.currentWarning || 2.0);
+      setCurrCrit(thresholds.currentCritical || 3.0);
+      setRatedRpm(thresholds.ratedRpm || 1500);
       setFrequency(audioSettings.frequency);
       setIntervalMs(audioSettings.intervalMs);
       setVolume(audioSettings.volume);
       setSoundEnabled(audioSettings.soundEnabled);
+      setAlarmOnWarning(audioSettings.alarmOnWarning !== false);
       setValidationErrors([]);
       setSaveSuccess(false);
     }
@@ -74,6 +82,9 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
       tempCritical: Number(tempCrit),
       vibWarning: Number(vibWarn),
       vibCritical: Number(vibCrit),
+      currentWarning: Number(currWarn),
+      currentCritical: Number(currCrit),
+      ratedRpm: Number(ratedRpm),
     });
 
     if (!result.success) {
@@ -86,6 +97,7 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
       intervalMs: Number(intervalMs),
       volume: Number(volume),
       soundEnabled: Boolean(soundEnabled),
+      alarmOnWarning: Boolean(alarmOnWarning),
     });
 
     setSaveSuccess(true);
@@ -102,10 +114,14 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
     setTempCrit(DEFAULT_THRESHOLDS.tempCritical);
     setVibWarn(DEFAULT_THRESHOLDS.vibWarning);
     setVibCrit(DEFAULT_THRESHOLDS.vibCritical);
+    setCurrWarn(DEFAULT_THRESHOLDS.currentWarning || 2.0);
+    setCurrCrit(DEFAULT_THRESHOLDS.currentCritical || 3.0);
+    setRatedRpm(DEFAULT_THRESHOLDS.ratedRpm || 1500);
     setFrequency(880);
     setIntervalMs(700);
     setVolume(0.75);
     setSoundEnabled(true);
+    setAlarmOnWarning(true);
     setValidationErrors([]);
   };
 
@@ -168,7 +184,7 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
                 <Flame className="h-4 w-4" />
-                <span>Temperature Thresholds (DS18B20 1-Wire)</span>
+                <span>Temperature Thresholds (Normal: 25–45°C)</span>
               </div>
               <span className="text-xs font-mono text-slate-400">Unit: °C</span>
             </div>
@@ -177,7 +193,7 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
               {/* Temp Warning */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Warning Threshold (°C)
+                  Warning Threshold (45–60°C)
                 </label>
                 <div className="relative">
                   <input
@@ -196,14 +212,14 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
                   </span>
                 </div>
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  Triggers amber visual warning when exceeded
+                  Triggers amber visual warning &amp; warning audio tone
                 </span>
               </div>
 
               {/* Temp Critical */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Critical Threshold (°C)
+                  Critical Threshold (&gt;60°C)
                 </label>
                 <div className="relative">
                   <input
@@ -222,7 +238,7 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
                   </span>
                 </div>
                 <span className="text-[10px] text-rose-400/80 mt-1 block">
-                  Triggers automatic repeating beep alarm
+                  Triggers urgent repeating critical beep alarm
                 </span>
               </div>
             </div>
@@ -233,16 +249,16 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
                 <Activity className="h-4 w-4" />
-                <span>Vibration Thresholds (MPU6050 3-Axis)</span>
+                <span>Vibration Thresholds (Normal: 0–1.5 m/s²)</span>
               </div>
-              <span className="text-xs font-mono text-slate-400">Unit: mm/s RMS</span>
+              <span className="text-xs font-mono text-slate-400">Unit: m/s²</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Vib Warning */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Warning Threshold (mm/s)
+                  Warning Threshold (1.5–3.0 m/s²)
                 </label>
                 <div className="relative">
                   <input
@@ -257,18 +273,18 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
                     className="w-full rounded-xl border border-amber-500/30 bg-slate-900 px-3.5 py-2.5 font-mono text-sm font-bold text-amber-300 focus:border-amber-400 focus:outline-none"
                   />
                   <span className="absolute right-3.5 top-1/2 -translate-y-1/2 font-mono text-xs text-slate-500 font-bold">
-                    mm/s
+                    m/s²
                   </span>
                 </div>
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  ISO 10816-3 Zone B/C boundary (unrestricted operation limit)
+                  Warning threshold boundary (1.5–3.0 m/s²)
                 </span>
               </div>
 
               {/* Vib Critical */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Critical Threshold (mm/s)
+                  Critical Threshold (&gt;3.0 m/s²)
                 </label>
                 <div className="relative">
                   <input
@@ -283,11 +299,98 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
                     className="w-full rounded-xl border border-rose-500/40 bg-slate-900 px-3.5 py-2.5 font-mono text-sm font-bold text-rose-400 focus:border-rose-400 focus:outline-none"
                   />
                   <span className="absolute right-3.5 top-1/2 -translate-y-1/2 font-mono text-xs text-slate-500 font-bold">
-                    mm/s
+                    m/s²
                   </span>
                 </div>
                 <span className="text-[10px] text-rose-400/80 mt-1 block">
-                  ISO 10816-3 Zone C/D critical damage threshold (audio alarm)
+                  Critical damage threshold (repeating audio alarm)
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Current & Rated RPM Configuration */}
+          <div className="rounded-2xl border border-cyan-500/20 bg-slate-950/60 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm">
+                <Sliders className="h-4 w-4" />
+                <span>Current &amp; Configurable Rated RPM</span>
+              </div>
+              <span className="text-xs font-mono text-slate-400">ACS712 &amp; Speed</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Current Warning */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Current Warning (2.0–3.0A)
+                </label>
+                <div className="relative">
+                  <input
+                    id="input-curr-warning"
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    max="50"
+                    required
+                    value={currWarn}
+                    onChange={(e) => setCurrWarn(parseFloat(e.target.value) || 0)}
+                    className="w-full rounded-xl border border-amber-500/30 bg-slate-900 px-3 py-2.5 font-mono text-xs font-bold text-amber-300 focus:border-amber-400 focus:outline-none"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-xs text-slate-500 font-bold">
+                    A
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">Normal: 0.2–2.0 A</span>
+              </div>
+
+              {/* Current Critical */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Current Critical (&gt;3.0A)
+                </label>
+                <div className="relative">
+                  <input
+                    id="input-curr-critical"
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    max="50"
+                    required
+                    value={currCrit}
+                    onChange={(e) => setCurrCrit(parseFloat(e.target.value) || 0)}
+                    className="w-full rounded-xl border border-rose-500/40 bg-slate-900 px-3 py-2.5 font-mono text-xs font-bold text-rose-400 focus:border-rose-400 focus:outline-none"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-xs text-slate-500 font-bold">
+                    A
+                  </span>
+                </div>
+                <span className="text-[10px] text-rose-400/80 mt-1 block">Overload: &gt;3.0 A</span>
+              </div>
+
+              {/* Configurable Rated RPM */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Configurable RATED_RPM
+                </label>
+                <div className="relative">
+                  <input
+                    id="input-rated-rpm"
+                    type="number"
+                    step="50"
+                    min="100"
+                    max="10000"
+                    required
+                    value={ratedRpm}
+                    onChange={(e) => setRatedRpm(parseFloat(e.target.value) || 1500)}
+                    className="w-full rounded-xl border border-purple-500/40 bg-slate-900 px-3 py-2.5 font-mono text-xs font-bold text-purple-300 focus:border-purple-400 focus:outline-none"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-xs text-slate-500 font-bold">
+                    RPM
+                  </span>
+                </div>
+                <span className="text-[10px] text-purple-400/80 mt-1 block">
+                  70-100%: Normal | 50-70%: Warn | &lt;50%: Crit
                 </span>
               </div>
             </div>
@@ -370,6 +473,34 @@ export const AlarmSettingsModal: React.FC<AlarmSettingsModalProps> = ({
                   Output gain intensity
                 </span>
               </div>
+            </div>
+
+            {/* Warning Alarm Toggle Option */}
+            <div className="pt-2 border-t border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <label htmlFor="toggle-alarm-on-warning" className="text-xs font-bold text-white flex items-center gap-2 cursor-pointer">
+                  <input
+                    id="toggle-alarm-on-warning"
+                    type="checkbox"
+                    checked={alarmOnWarning}
+                    onChange={(e) => setAlarmOnWarning(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-500/20 cursor-pointer"
+                  />
+                  <span>Play Audible Alert on Warning Threshold (e.g. Temp &gt; 70°C)</span>
+                </label>
+                <p className="text-[11px] text-slate-400 mt-0.5 pl-6">
+                  Sounds a distinct moderate warning pulse tone as soon as temperature or vibration rises above the warning threshold.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => playTestBeep(Math.round(frequency * 0.75), 220)}
+                className="self-end sm:self-auto flex items-center gap-1 text-[11px] font-semibold text-amber-400 hover:text-amber-300 transition-colors"
+              >
+                <Play className="h-3 w-3" />
+                <span>Test Warning Tone</span>
+              </button>
             </div>
           </div>
 

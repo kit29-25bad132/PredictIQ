@@ -12,10 +12,13 @@ import audioAlarmService, { AudioState } from '../services/audioAlarmService';
 import api from '../services/api';
 
 export const DEFAULT_THRESHOLDS: AlarmThresholds = {
-  tempWarning: 70.0,   // °C
-  tempCritical: 80.0,  // °C
-  vibWarning: 4.5,     // mm/s RMS (ISO 10816-3 Zone B/C limit)
-  vibCritical: 6.0,    // mm/s RMS (ISO 10816-3 Zone C/D critical boundary)
+  tempWarning: 45.0,    // °C (Normal: 25–45°C, Warning: 45–60°C)
+  tempCritical: 60.0,   // °C (Critical: >60°C)
+  vibWarning: 1.5,      // m/s² (Normal: 0–1.5 m/s², Warning: 1.5–3.0 m/s²)
+  vibCritical: 3.0,     // m/s² (Critical: >3.0 m/s²)
+  currentWarning: 2.0,  // A (Normal: 0.2–2.0 A, Warning: 2.0–3.0 A)
+  currentCritical: 3.0, // A (Critical: >3.0 A)
+  ratedRpm: 1500,       // Configurable RATED_RPM (default: 1500)
 };
 
 export interface AlarmContextType {
@@ -94,9 +97,12 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return [];
   });
 
-  // Ref to track active critical alarms across asynchronous evaluations
+  // Ref to track active alarms across asynchronous evaluations
   const activeCriticalAlarmsRef = useRef<ActiveCriticalAlarm[]>([]);
   activeCriticalAlarmsRef.current = activeCriticalAlarms;
+
+  const activeWarningsRef = useRef<ActiveWarningAlarm[]>([]);
+  activeWarningsRef.current = activeWarnings;
 
   const isAudioMutedRef = useRef<boolean>(false);
   isAudioMutedRef.current = isAudioMuted;
@@ -141,7 +147,15 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       errors.push('Vibration critical threshold must be a positive number.');
     }
     if (merged.vibWarning >= merged.vibCritical) {
-      errors.push(`Vibration warning threshold (${merged.vibWarning} mm/s) must be lower than critical threshold (${merged.vibCritical} mm/s).`);
+      errors.push(`Vibration warning threshold (${merged.vibWarning} m/s²) must be lower than critical threshold (${merged.vibCritical} m/s²).`);
+    }
+
+    if (merged.currentWarning && merged.currentCritical && merged.currentWarning >= merged.currentCritical) {
+      errors.push(`Current warning threshold (${merged.currentWarning} A) must be lower than critical threshold (${merged.currentCritical} A).`);
+    }
+
+    if (merged.ratedRpm && (isNaN(merged.ratedRpm) || merged.ratedRpm <= 0)) {
+      errors.push('Rated RPM must be a positive number.');
     }
 
     if (errors.length > 0) {
@@ -191,11 +205,15 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const enableAudio = useCallback(async () => {
     const success = await audioAlarmService.enableAudio();
-    if (success && activeCriticalAlarmsRef.current.length > 0 && !isAudioMutedRef.current) {
-      audioAlarmService.startAlarm();
+    if (success && !isAudioMutedRef.current) {
+      if (activeCriticalAlarmsRef.current.length > 0) {
+        audioAlarmService.startAlarm('critical');
+      } else if (activeWarningsRef.current.length > 0 && audioSettings.alarmOnWarning !== false) {
+        audioAlarmService.startAlarm('warning');
+      }
     }
     return success;
-  }, []);
+  }, [audioSettings.alarmOnWarning]);
 
   const playTestBeep = useCallback((freq?: number, durationMs?: number) => {
     audioAlarmService.playTestBeep(freq, durationMs);
@@ -244,7 +262,7 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
    */
   const evaluateFleetTelemetry = useCallback((machines: Machine[]) => {
     if (!machines || machines.length === 0) {
-      if (activeCriticalAlarmsRef.current.length > 0) {
+      if (activeCriticalAlarmsRef.current.length > 0 || activeWarningsRef.current.length > 0) {
         audioAlarmService.stopAlarm();
         setActiveCriticalAlarms([]);
         setActiveWarnings([]);
@@ -255,6 +273,10 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const currentCritical: ActiveCriticalAlarm[] = [];
     const currentWarnings: ActiveWarningAlarm[] = [];
 
+    const ratedRpm = thresholds.ratedRpm || 1500;
+    const currWarn = thresholds.currentWarning || 2.0;
+    const currCrit = thresholds.currentCritical || 3.0;
+
     machines.forEach((machine) => {
       const reading = machine.latest_reading;
       if (!reading) return;
@@ -262,9 +284,11 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Skip invalid, stale or null values
       const temp = typeof reading.temperature === 'number' && isFinite(reading.temperature) ? reading.temperature : null;
       const vib = typeof reading.vibration === 'number' && isFinite(reading.vibration) ? reading.vibration : null;
+      const curr = typeof reading.current === 'number' && isFinite(reading.current) ? reading.current : null;
+      const rpm = typeof reading.rpm === 'number' && isFinite(reading.rpm) ? reading.rpm : null;
       const timestamp = reading.timestamp || new Date().toISOString();
 
-      // 1. Evaluate Temperature
+      // 1. Evaluate Temperature (NORMAL: 25-45°C, WARNING: 45-60°C, CRITICAL: >60°C)
       if (temp !== null) {
         if (temp >= thresholds.tempCritical) {
           currentCritical.push({
@@ -297,7 +321,7 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
 
-      // 2. Evaluate Vibration
+      // 2. Evaluate Vibration (NORMAL: 0-1.5 m/s², WARNING: 1.5-3.0 m/s², CRITICAL: >3.0 m/s²)
       if (vib !== null) {
         if (vib >= thresholds.vibCritical) {
           currentCritical.push({
@@ -308,7 +332,7 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             channelLabel: 'Vibration',
             currentValue: vib,
             threshold: thresholds.vibCritical,
-            unit: 'mm/s RMS',
+            unit: 'm/s²',
             timestamp,
             severity: 'CRITICAL',
             source: reading.source,
@@ -322,7 +346,74 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             channelLabel: 'Vibration',
             currentValue: vib,
             threshold: thresholds.vibWarning,
-            unit: 'mm/s RMS',
+            unit: 'm/s²',
+            timestamp,
+            severity: 'WARNING',
+            source: reading.source,
+          });
+        }
+      }
+
+      // 3. Evaluate Current (NORMAL: 0.2-2.0A, WARNING: 2.0-3.0A, CRITICAL: >3.0A)
+      if (curr !== null) {
+        if (curr >= currCrit) {
+          currentCritical.push({
+            id: `${machine.machine_id}-curr-crit-${timestamp}`,
+            machineId: machine.machine_id,
+            machineName: machine.name,
+            channel: 'current',
+            channelLabel: 'Current',
+            currentValue: curr,
+            threshold: currCrit,
+            unit: 'A',
+            timestamp,
+            severity: 'CRITICAL',
+            source: reading.source,
+          });
+        } else if (curr >= currWarn) {
+          currentWarnings.push({
+            id: `${machine.machine_id}-curr-warn-${timestamp}`,
+            machineId: machine.machine_id,
+            machineName: machine.name,
+            channel: 'current',
+            channelLabel: 'Current',
+            currentValue: curr,
+            threshold: currWarn,
+            unit: 'A',
+            timestamp,
+            severity: 'WARNING',
+            source: reading.source,
+          });
+        }
+      }
+
+      // 4. Evaluate RPM (NORMAL: 70-100% rated, WARNING: 50-70% rated, CRITICAL: <50% rated)
+      if (rpm !== null && ratedRpm > 0) {
+        const rpmPercent = (rpm / ratedRpm) * 100;
+        if (rpmPercent < 50) {
+          currentCritical.push({
+            id: `${machine.machine_id}-rpm-crit-${timestamp}`,
+            machineId: machine.machine_id,
+            machineName: machine.name,
+            channel: 'rpm',
+            channelLabel: 'RPM',
+            currentValue: rpm,
+            threshold: Math.round(ratedRpm * 0.5),
+            unit: 'RPM',
+            timestamp,
+            severity: 'CRITICAL',
+            source: reading.source,
+          });
+        } else if (rpmPercent < 70) {
+          currentWarnings.push({
+            id: `${machine.machine_id}-rpm-warn-${timestamp}`,
+            machineId: machine.machine_id,
+            machineName: machine.name,
+            channel: 'rpm',
+            channelLabel: 'RPM',
+            currentValue: rpm,
+            threshold: Math.round(ratedRpm * 0.7),
+            unit: 'RPM',
             timestamp,
             severity: 'WARNING',
             source: reading.source,
@@ -333,6 +424,9 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const hadPreviousCritical = activeCriticalAlarmsRef.current.length > 0;
     const hasCurrentCritical = currentCritical.length > 0;
+    const hadPreviousWarning = activeWarningsRef.current.length > 0;
+    const hasCurrentWarning = currentWarnings.length > 0;
+    const alarmOnWarning = audioSettings.alarmOnWarning !== false;
 
     setActiveCriticalAlarms(currentCritical);
     setActiveWarnings(currentWarnings);
@@ -340,56 +434,78 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // =========================================================================
     // STATE MACHINE TRANSITIONS
     // =========================================================================
-    if (!hadPreviousCritical && hasCurrentCritical) {
-      // 1. TRANSITION: Normal/Warning -> CRITICAL (NEW INCIDENT)
-      setIsAudioMuted(false);
-      isAudioMutedRef.current = false;
-      audioAlarmService.startAlarm();
+    if (hasCurrentCritical) {
+      if (!hadPreviousCritical) {
+        // 1. TRANSITION: Normal/Warning -> CRITICAL (NEW CRITICAL INCIDENT)
+        setIsAudioMuted(false);
+        isAudioMutedRef.current = false;
+        audioAlarmService.startAlarm('critical');
 
-      // Log new incident records
-      const newIncidents: AlarmIncidentRecord[] = currentCritical.map((alarm) => ({
-        id: `INC-${Date.now()}-${alarm.machineId}-${alarm.channel}`,
-        machineId: alarm.machineId,
-        machineName: alarm.machineName || alarm.machineId,
-        deviceId: `NODE-${alarm.machineId}`,
-        source: alarm.source || 'REAL_HARDWARE',
-        alarmType: `${alarm.channelLabel} Critical Breach`,
-        sensorReading: alarm.currentValue,
-        configuredThreshold: alarm.threshold,
-        unit: alarm.unit,
-        severity: 'Critical',
-        timestamp: alarm.timestamp,
-        status: 'ACTIVE',
-        isAudioMuted: false,
-      }));
+        // Log new incident records
+        const newIncidents: AlarmIncidentRecord[] = currentCritical.map((alarm) => ({
+          id: `INC-${Date.now()}-${alarm.machineId}-${alarm.channel}`,
+          machineId: alarm.machineId,
+          machineName: alarm.machineName || alarm.machineId,
+          deviceId: `NODE-${alarm.machineId}`,
+          source: alarm.source || 'REAL_HARDWARE',
+          alarmType: `${alarm.channelLabel} Critical Breach`,
+          sensorReading: alarm.currentValue,
+          configuredThreshold: alarm.threshold,
+          unit: alarm.unit,
+          severity: 'Critical',
+          timestamp: alarm.timestamp,
+          status: 'ACTIVE',
+          isAudioMuted: false,
+        }));
 
-      setAlarmIncidents(prev => [...newIncidents, ...prev.slice(0, 45)]);
-    } else if (hadPreviousCritical && hasCurrentCritical) {
-      // 2. TRANSITION: CRITICAL -> CRITICAL (CONTINUING INCIDENT)
-      if (isAudioMutedRef.current) {
-        // Keep sound muted, do not restart
+        setAlarmIncidents(prev => [...newIncidents, ...prev.slice(0, 45)]);
       } else {
-        // Ensure repeating sound is actively running
-        if (!audioAlarmService.isPlaying()) {
-          audioAlarmService.startAlarm();
+        // Continuing Critical incident
+        if (!isAudioMutedRef.current && !audioAlarmService.isPlaying()) {
+          audioAlarmService.startAlarm('critical');
         }
       }
-    } else if (hadPreviousCritical && !hasCurrentCritical) {
-      // 3. TRANSITION: CRITICAL -> NORMAL (RESOLVED)
-      audioAlarmService.stopAlarm();
-      setIsAudioMuted(false);
-      isAudioMutedRef.current = false;
+    } else if (hasCurrentWarning && alarmOnWarning) {
+      if (!hadPreviousWarning && !hadPreviousCritical) {
+        // Transition to Warning with audio enabled
+        setIsAudioMuted(false);
+        isAudioMutedRef.current = false;
+        audioAlarmService.startAlarm('warning');
+      } else if (hadPreviousCritical) {
+        // De-escalated from Critical to Warning
+        audioAlarmService.startAlarm('warning');
+        // Mark critical incidents as resolved
+        setAlarmIncidents(prev =>
+          prev.map(inc =>
+            inc.status === 'ACTIVE' && inc.severity === 'Critical'
+              ? { ...inc, status: 'RESOLVED', resolvedAt: new Date().toISOString() }
+              : inc
+          )
+        );
+      } else {
+        // Continuing Warning
+        if (!isAudioMutedRef.current && !audioAlarmService.isPlaying()) {
+          audioAlarmService.startAlarm('warning');
+        }
+      }
+    } else {
+      // 3. TRANSITION: Normal / Cleared
+      if (hadPreviousCritical || hadPreviousWarning) {
+        audioAlarmService.stopAlarm();
+        setIsAudioMuted(false);
+        isAudioMutedRef.current = false;
 
-      // Automatically mark previous active incidents as RESOLVED
-      setAlarmIncidents(prev =>
-        prev.map(inc =>
-          inc.status === 'ACTIVE'
-            ? { ...inc, status: 'RESOLVED', resolvedAt: new Date().toISOString() }
-            : inc
-        )
-      );
+        // Automatically mark previous active incidents as RESOLVED
+        setAlarmIncidents(prev =>
+          prev.map(inc =>
+            inc.status === 'ACTIVE'
+              ? { ...inc, status: 'RESOLVED', resolvedAt: new Date().toISOString() }
+              : inc
+          )
+        );
+      }
     }
-  }, [thresholds]);
+  }, [thresholds, audioSettings.alarmOnWarning]);
 
   // Load backend alerts into incidents history
   useEffect(() => {

@@ -272,10 +272,13 @@ export type AlarmSeverity = 'NORMAL' | 'WARNING' | 'CRITICAL';
 export type TelemetryChannel = 'temperature' | 'vibration' | 'current' | 'rpm';
 
 export interface AlarmThresholds {
-  tempWarning: number;   // °C (default: 70.0)
-  tempCritical: number;  // °C (default: 80.0)
-  vibWarning: number;    // mm/s RMS (default: 4.5)
-  vibCritical: number;   // mm/s RMS (default: 6.0)
+  tempWarning: number;       // °C (default: 45.0, range: 45–60°C)
+  tempCritical: number;      // °C (default: 60.0, critical: >60°C)
+  vibWarning: number;        // m/s² (default: 1.5, range: 1.5–3.0 m/s²)
+  vibCritical: number;       // m/s² (default: 3.0, critical: >3.0 m/s²)
+  currentWarning?: number;   // A (default: 2.0, range: 2.0–3.0 A)
+  currentCritical?: number;  // A (default: 3.0, critical: >3.0 A)
+  ratedRpm?: number;         // Configurable RATED_RPM (default: 1500 RPM)
 }
 
 export interface AlarmAudioSettings {
@@ -284,6 +287,7 @@ export interface AlarmAudioSettings {
   intervalMs: number;      // ms (e.g. 700)
   volume: number;          // 0.0 - 1.0 (e.g. 0.8)
   soundEnabled: boolean;   // global toggle
+  alarmOnWarning?: boolean; // also play audible alert on warning threshold
 }
 
 export interface ActiveCriticalAlarm {

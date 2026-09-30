@@ -18,10 +18,10 @@ export class AlarmEvaluationEngine {
 
   constructor(thresholds?: Partial<AlarmThresholds>) {
     this.thresholds = {
-      tempWarning: 70.0,
-      tempCritical: 80.0,
-      vibWarning: 4.5,
-      vibCritical: 6.0,
+      tempWarning: 45.0,
+      tempCritical: 60.0,
+      vibWarning: 1.5,
+      vibCritical: 3.0,
       ...thresholds,
     };
   }
@@ -206,52 +206,52 @@ console.log('================================================================\n'
 // Test 1: Normal temperature & normal vibration -> No alarm
 {
   const engine = new AlarmEvaluationEngine();
-  const machine = createMachine('M001', 45.0, 1.2);
+  const machine = createMachine('M001', 35.0, 0.8);
   engine.evaluateTelemetry([machine]);
   assert(engine.activeCritical.length === 0 && engine.activeWarnings.length === 0 && !engine.isAudioPlaying,
-    'Normal temperature (45°C) and normal vibration (1.2 mm/s): No alarm triggered.');
+    'Normal temperature (35°C) and normal vibration (0.8 m/s²): No alarm triggered.');
 }
 
 // Test 2: Temperature warning -> Show warning, no critical beep
 {
   const engine = new AlarmEvaluationEngine();
-  const machine = createMachine('M001', 72.5, 1.5); // Warn: >= 70, Crit: >= 80
+  const machine = createMachine('M001', 52.5, 0.8); // Warn: >= 45, Crit: >= 60
   engine.evaluateTelemetry([machine]);
   assert(engine.activeCritical.length === 0 && engine.activeWarnings.length === 1 && !engine.isAudioPlaying,
-    'Temperature warning (72.5°C): Warning state active, audible beep inactive.');
+    'Temperature warning (52.5°C): Warning state active, audible beep inactive.');
 }
 
 // Test 3: Temperature critical -> Repeating beep starts when audio enabled
 {
   const engine = new AlarmEvaluationEngine();
-  const machine = createMachine('M001', 82.4, 2.1); // Crit: >= 80
+  const machine = createMachine('M001', 64.4, 0.9); // Crit: >= 60
   engine.evaluateTelemetry([machine]);
   assert(engine.activeCritical.length === 1 && engine.isAudioPlaying && engine.activeCritical[0].channel === 'temperature',
-    'Temperature critical (82.4°C): Repeating beep alarm started automatically.');
+    'Temperature critical (64.4°C): Repeating beep alarm started automatically.');
 }
 
 // Test 4: Vibration warning -> Show warning, no critical beep
 {
   const engine = new AlarmEvaluationEngine();
-  const machine = createMachine('M001', 50.0, 5.2); // Warn: >= 4.5, Crit: >= 6.0
+  const machine = createMachine('M001', 38.0, 2.2); // Warn: >= 1.5, Crit: >= 3.0
   engine.evaluateTelemetry([machine]);
   assert(engine.activeCritical.length === 0 && engine.activeWarnings.length === 1 && !engine.isAudioPlaying,
-    'Vibration warning (5.2 mm/s): Warning state active, audible beep inactive.');
+    'Vibration warning (2.2 m/s²): Warning state active, audible beep inactive.');
 }
 
 // Test 5: Vibration critical -> Repeating beep starts when audio enabled
 {
   const engine = new AlarmEvaluationEngine();
-  const machine = createMachine('M001', 52.0, 7.85); // Crit: >= 6.0
+  const machine = createMachine('M001', 40.0, 3.85); // Crit: >= 3.0
   engine.evaluateTelemetry([machine]);
   assert(engine.activeCritical.length === 1 && engine.isAudioPlaying && engine.activeCritical[0].channel === 'vibration',
-    'Vibration critical (7.85 mm/s): Repeating beep alarm started automatically.');
+    'Vibration critical (3.85 m/s²): Repeating beep alarm started automatically.');
 }
 
 // Test 6: Both critical -> One repeating beep with both reasons visible
 {
   const engine = new AlarmEvaluationEngine();
-  const machine = createMachine('M001', 85.0, 8.2); // Both >= Crit
+  const machine = createMachine('M001', 65.0, 4.2); // Both >= Crit (Temp >= 60, Vib >= 3.0)
   engine.evaluateTelemetry([machine]);
   assert(engine.activeCritical.length === 2 && engine.isAudioPlaying &&
     engine.activeCritical.some(c => c.channel === 'temperature') &&
@@ -262,7 +262,7 @@ console.log('================================================================\n'
 // Test 7: Mute during critical alarm -> Sound stops immediately, visual alert remains
 {
   const engine = new AlarmEvaluationEngine();
-  const machine = createMachine('M001', 85.0, 8.2);
+  const machine = createMachine('M001', 65.0, 3.8);
   engine.evaluateTelemetry([machine]);
   assert(engine.isAudioPlaying, 'Alarm playing before mute');
   engine.muteAlarm();
@@ -273,12 +273,12 @@ console.log('================================================================\n'
 // Test 8: Same critical event after muting -> Do not restart beep automatically
 {
   const engine = new AlarmEvaluationEngine();
-  const machine1 = createMachine('M001', 85.0, 8.2);
+  const machine1 = createMachine('M001', 65.0, 3.8);
   engine.evaluateTelemetry([machine1]);
   engine.muteAlarm();
 
   // Subsequent telemetry poll with continued critical readings
-  const machine2 = createMachine('M001', 86.1, 8.4);
+  const machine2 = createMachine('M001', 66.1, 4.0);
   engine.evaluateTelemetry([machine2]);
   assert(!engine.isAudioPlaying && engine.isAudioMuted && engine.activeCritical.length === 2,
     'Same ongoing critical incident: Sound remains muted across subsequent polls.');
@@ -288,17 +288,17 @@ console.log('================================================================\n'
 {
   const engine = new AlarmEvaluationEngine();
   // 1. Initial breach + Mute
-  engine.evaluateTelemetry([createMachine('M001', 85.0, 8.2)]);
+  engine.evaluateTelemetry([createMachine('M001', 65.0, 3.8)]);
   engine.muteAlarm();
   assert(engine.isAudioMuted, 'Muted during incident 1');
 
   // 2. Condition clears back to normal
-  engine.evaluateTelemetry([createMachine('M001', 45.0, 1.2)]);
+  engine.evaluateTelemetry([createMachine('M001', 35.0, 0.8)]);
   assert(engine.activeCritical.length === 0 && !engine.isAudioPlaying && !engine.isAudioMuted,
     'Condition cleared: Alarm stopped, mute state reset.');
 
   // 3. New critical breach occurs later
-  engine.evaluateTelemetry([createMachine('M001', 88.0, 1.5)]);
+  engine.evaluateTelemetry([createMachine('M001', 68.0, 0.9)]);
   assert(engine.activeCritical.length === 1 && engine.isAudioPlaying && !engine.isAudioMuted,
     'New critical incident after clearance: New alarm starts and audible beep sounds again.');
 }
