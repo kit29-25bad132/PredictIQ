@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Machine, FleetStats, FeedbackContext } from './types';
 import api from './services/api';
 import Sidebar, { NavTab } from './components/Sidebar';
 import Header from './components/Header';
-import LoginScreen from './components/LoginScreen';
+import HomePage from './pages/HomePage';
+import AuthPage from './pages/AuthPage';
 import DashboardPage from './pages/DashboardPage';
 import MachinesPage from './pages/MachinesPage';
 import MachineDetailsPage from './pages/MachineDetailsPage';
@@ -16,11 +17,18 @@ import SensorDataPage from './pages/SensorDataPage';
 import SettingsPage from './pages/SettingsPage';
 import ManualSensorModal from './components/ManualSensorModal';
 import AddMachineModal from './components/AddMachineModal';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 
-export function App() {
-  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+type AppRoute = 'home' | 'signin' | 'signup' | 'workbench';
+
+function MainAppContent() {
+  const { user, loading: authLoading, isAuthenticated, userName, logout } = useAuth();
+
+  // Route State: 'home' | 'signin' | 'signup' | 'workbench'
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>('home');
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+
   const [selectedMachineId, setSelectedMachineId] = useState<string>('');
   const [machines, setMachines] = useState<Machine[]>([]);
   const [fleetStats, setFleetStats] = useState<FleetStats>({
@@ -42,7 +50,7 @@ export function App() {
   const [modalTargetMachineId, setModalTargetMachineId] = useState<string | undefined>(undefined);
   const [isAddMachineModalOpen, setIsAddMachineModalOpen] = useState<boolean>(false);
 
-  // Feedback form pre-link context (opened from an alert or prediction)
+  // Feedback form pre-link context
   const [feedbackInitialContext, setFeedbackInitialContext] = useState<FeedbackContext | null>(null);
 
   // Toast notifications
@@ -53,27 +61,75 @@ export function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Check session on startup
-  useEffect(() => {
-    api.checkSession()
-      .then((session) => {
-        setAuthState(session.authenticated ? 'authenticated' : 'unauthenticated');
-      })
-      .catch(() => {
-        setAuthState('unauthenticated');
-      });
-  }, []);
-
-  const handleLogout = useCallback(async () => {
-    try {
-      await api.logout();
-    } catch {
-      // Logout even if the request fails (e.g. backend unreachable)
+  // Synchronize route from browser URL on mount and on popstate
+  const syncRouteFromPath = useCallback(() => {
+    const path = window.location.pathname.toLowerCase();
+    if (path === '/signin') {
+      setCurrentRoute('signin');
+    } else if (path === '/signup') {
+      setCurrentRoute('signup');
+    } else if (
+      path === '/dashboard' ||
+      path === '/machines' ||
+      path === '/machine-details' ||
+      path === '/monitoring' ||
+      path === '/predictions' ||
+      path === '/maintenance' ||
+      path === '/alerts' ||
+      path === '/feedback' ||
+      path === '/sensor-data' ||
+      path === '/settings'
+    ) {
+      setCurrentRoute('workbench');
+      const tabName = path.substring(1) as NavTab;
+      setActiveTab(tabName);
+    } else {
+      setCurrentRoute('home');
     }
-    setAuthState('unauthenticated');
   }, []);
 
-  // Primary Data Fetcher
+  // Update browser URL without reloading
+  const navigateTo = useCallback((route: AppRoute, tab?: NavTab) => {
+    setCurrentRoute(route);
+    let targetPath = '/';
+    if (route === 'signin') targetPath = '/signin';
+    else if (route === 'signup') targetPath = '/signup';
+    else if (route === 'workbench') {
+      const selected = tab || activeTab || 'dashboard';
+      setActiveTab(selected);
+      targetPath = `/${selected}`;
+    }
+
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({}, '', targetPath);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    syncRouteFromPath();
+    const handlePopState = () => syncRouteFromPath();
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [syncRouteFromPath]);
+
+  // Auth navigation guards
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (isAuthenticated) {
+      // If user is already authenticated and visits signin or signup, redirect to dashboard
+      if (currentRoute === 'signin' || currentRoute === 'signup') {
+        navigateTo('workbench', 'dashboard');
+      }
+    } else {
+      // If user is unauthenticated and visits protected routes, redirect to signin
+      if (currentRoute === 'workbench') {
+        navigateTo('signin');
+      }
+    }
+  }, [isAuthenticated, authLoading, currentRoute, navigateTo]);
+
+  // Primary Fleet Data Fetcher
   const loadFleetData = useCallback(async () => {
     try {
       // 1. Health check
@@ -124,9 +180,14 @@ export function App() {
   }, [autoRefresh, loadFleetData]);
 
   // Navigation handlers
+  const handleSelectTab = (tab: NavTab) => {
+    setActiveTab(tab);
+    navigateTo('workbench', tab);
+  };
+
   const handleSelectMachine = (machineId: string) => {
     setSelectedMachineId(machineId);
-    setActiveTab('machine-details');
+    handleSelectTab('machine-details');
   };
 
   const handleOpenManualModal = (machineId?: string) => {
@@ -136,7 +197,7 @@ export function App() {
 
   const handleOpenFeedback = (context: FeedbackContext) => {
     setFeedbackInitialContext(context);
-    setActiveTab('feedback');
+    handleSelectTab('feedback');
   };
 
   const handleRetryBackend = async () => {
@@ -149,34 +210,67 @@ export function App() {
     }
   };
 
-  // Auth gate
-  if (authState === 'loading') {
+  const handleLogout = async () => {
+    await logout();
+    navigateTo('home');
+    showToast('Signed out successfully.');
+  };
+
+  // Auth Loading Screen
+  if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
-          <span className="text-sm text-slate-400 font-mono">Checking session...</span>
+          <span className="text-sm text-slate-400 font-mono">Restoring session...</span>
         </div>
       </div>
     );
   }
 
-  if (authState === 'unauthenticated') {
-    return <LoginScreen onAuthenticated={() => setAuthState('authenticated')} />;
+  // Route 1: Public Landing Page
+  if (currentRoute === 'home') {
+    return (
+      <HomePage
+        onNavigate={(dest) => {
+          if (dest === 'signin') navigateTo('signin');
+          else if (dest === 'signup') navigateTo('signup');
+          else if (dest === 'dashboard') navigateTo('workbench', 'dashboard');
+        }}
+        isAuthenticated={isAuthenticated}
+        userName={userName}
+      />
+    );
   }
 
+  // Route 2 & 3: Sign In & Sign Up Pages
+  if (currentRoute === 'signin' || currentRoute === 'signup') {
+    return (
+      <AuthPage
+        initialMode={currentRoute === 'signup' ? 'signup' : 'signin'}
+        onSuccess={() => {
+          navigateTo('workbench', 'dashboard');
+          showToast(`Welcome back, ${userName || 'Operator'}!`);
+        }}
+        onBackToHome={() => navigateTo('home')}
+      />
+    );
+  }
+
+  // Route 4: Authenticated Industrial Workbench
   return (
     <div id="predictiq-root" className="flex min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950">
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={handleSelectTab}
         activeAlertsCount={fleetStats.active_alerts}
         criticalMachinesCount={machines.filter(m => m.status === 'Critical').length}
         backendOnline={backendOnline}
         isMobileOpen={isMobileNavOpen}
         onCloseMobile={() => setIsMobileNavOpen(false)}
         onLogout={handleLogout}
+        onNavigateHome={() => navigateTo('home')}
       />
 
       {/* Main Content Area */}
@@ -188,9 +282,10 @@ export function App() {
           onToggleAutoRefresh={setAutoRefresh}
           activeAlertsCount={fleetStats.active_alerts}
           onOpenManualModal={() => handleOpenManualModal()}
-          onNavigateToAlerts={() => setActiveTab('alerts')}
+          onNavigateToAlerts={() => handleSelectTab('alerts')}
           backendOnline={backendOnline}
           onRetryBackend={handleRetryBackend}
+          onNavigateHome={() => navigateTo('home')}
         />
 
         {/* Mobile Navigation Trigger Bar */}
@@ -218,7 +313,7 @@ export function App() {
                   <h4 className="text-xs font-bold text-amber-300">FastAPI Backend Offline</h4>
                   <p className="text-xs text-amber-200/80 mt-0.5">
                     Could not connect to FastAPI server at <code className="font-mono bg-slate-900/80 px-1 py-0.5 rounded text-white">{api.getBaseUrl()}</code>.
-                    {backendError ? ` (${backendError})` : ''} Start backend with <code className="font-mono bg-slate-900/80 px-1 py-0.5 rounded text-white">python -m uvicorn backend.main:app --reload</code>.
+                    {backendError ? ` (${backendError})` : ''} Verify backend is running.
                   </p>
                 </div>
               </div>
@@ -263,7 +358,7 @@ export function App() {
               machineId={selectedMachineId}
               machines={machines}
               onSelectMachine={setSelectedMachineId}
-              onBackToDashboard={() => setActiveTab('dashboard')}
+              onBackToDashboard={() => handleSelectTab('dashboard')}
               onOpenManualModal={handleOpenManualModal}
             />
           )}
@@ -364,6 +459,14 @@ export function App() {
         </div>
       )}
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <MainAppContent />
+    </AuthProvider>
   );
 }
 
