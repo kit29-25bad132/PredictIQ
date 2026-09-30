@@ -28,7 +28,12 @@ import {
   Layers,
   History,
   Info,
+  Sliders,
 } from 'lucide-react';
+import { useAlarm } from '../context/AlarmContext';
+import AlarmStatusBar from '../components/AlarmStatusBar';
+import AlarmSettingsModal from '../components/AlarmSettingsModal';
+import AlarmHistoryPanel from '../components/AlarmHistoryPanel';
 
 interface DashboardPageProps {
   machines: Machine[];
@@ -50,6 +55,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   onRefresh,
 }) => {
   const { user, greeting, userName, initials, photoURL, logout } = useAuth();
+  const { thresholds } = useAlarm();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -59,6 +65,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [primaryMachineId, setPrimaryMachineId] = useState<string>('');
   const [recentTelemetry, setRecentTelemetry] = useState<SensorReading[]>([]);
   const [telemetryLoading, setTelemetryLoading] = useState<boolean>(false);
+  const [isAlarmSettingsOpen, setIsAlarmSettingsOpen] = useState<boolean>(false);
 
   // Set initial selected primary machine
   useEffect(() => {
@@ -200,6 +207,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           {/* Quick Action Controls */}
           <div className="flex flex-wrap items-center gap-2">
             <button
+              id="btn-dash-alarm-settings"
+              onClick={() => setIsAlarmSettingsOpen(true)}
+              className="flex items-center gap-1.5 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/20 transition-all shadow-sm"
+            >
+              <Sliders className="h-3.5 w-3.5 text-cyan-400" />
+              <span>Alarm Settings</span>
+            </button>
+
+            <button
               id="btn-dash-refresh"
               onClick={() => {
                 onRefresh();
@@ -244,7 +260,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 2. REAL-TIME SENSOR TELEMETRY CARDS (DS18B20, MPU6050, ACS712, RPM)       */}
+      {/* 2. REAL-TIME AUDIBLE ALARM SYSTEM STATUS & CONTROL BAR                     */}
+      {/* ========================================================================= */}
+      <AlarmStatusBar onOpenSettings={() => setIsAlarmSettingsOpen(true)} />
+
+      {/* ========================================================================= */}
+      {/* 3. REAL-TIME SENSOR TELEMETRY CARDS (DS18B20, MPU6050, ACS712, RPM)       */}
       {/* ========================================================================= */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl backdrop-blur-md">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4 mb-4">
@@ -314,15 +335,19 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </div>
               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
                 latestReading && latestReading.temperature !== undefined && latestReading.temperature !== null
-                  ? latestReading.temperature > 80
-                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                    : latestReading.temperature > 70
+                  ? latestReading.temperature >= thresholds.tempCritical
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse'
+                    : latestReading.temperature >= thresholds.tempWarning
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                     : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                   : 'bg-slate-800 text-slate-400'
               }`}>
                 {latestReading && latestReading.temperature !== undefined && latestReading.temperature !== null
-                  ? latestReading.temperature > 80 ? 'CRITICAL' : latestReading.temperature > 70 ? 'WARNING' : 'NORMAL'
+                  ? latestReading.temperature >= thresholds.tempCritical
+                    ? 'CRITICAL'
+                    : latestReading.temperature >= thresholds.tempWarning
+                    ? 'WARNING'
+                    : 'NORMAL'
                   : 'NOT CONFIGURED'}
               </span>
             </div>
@@ -337,7 +362,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
 
             <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-900 pt-2 font-mono">
-              <span>Threshold: &le; 75.0°C</span>
+              <span>Limit: Warn &ge; {thresholds.tempWarning.toFixed(1)}°C | Crit &ge; {thresholds.tempCritical.toFixed(1)}°C</span>
               <span className="text-slate-500">
                 {latestReading ? latestReading.source || 'REAL' : 'No Data'}
               </span>
@@ -360,15 +385,19 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </div>
               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
                 latestReading && latestReading.vibration !== undefined && latestReading.vibration !== null
-                  ? latestReading.vibration > 6
-                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                    : latestReading.vibration > 4
+                  ? latestReading.vibration >= thresholds.vibCritical
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse'
+                    : latestReading.vibration >= thresholds.vibWarning
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                     : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                   : 'bg-slate-800 text-slate-400'
               }`}>
                 {latestReading && latestReading.vibration !== undefined && latestReading.vibration !== null
-                  ? latestReading.vibration > 6 ? 'CRITICAL' : latestReading.vibration > 4 ? 'WARNING' : 'NORMAL'
+                  ? latestReading.vibration >= thresholds.vibCritical
+                    ? 'CRITICAL'
+                    : latestReading.vibration >= thresholds.vibWarning
+                    ? 'WARNING'
+                    : 'NORMAL'
                   : 'NOT CONFIGURED'}
               </span>
             </div>
@@ -383,7 +412,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
 
             <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-900 pt-2 font-mono">
-              <span>ISO Limit: &le; 4.5 mm/s</span>
+              <span>Limit: Warn &ge; {thresholds.vibWarning.toFixed(2)} | Crit &ge; {thresholds.vibCritical.toFixed(2)} mm/s</span>
               <span className="text-slate-500">
                 {latestReading ? latestReading.source || 'REAL' : 'No Data'}
               </span>
@@ -670,7 +699,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 6. FLEET FILTER & MACHINE ASSET GRID                                      */}
+      {/* 6. ALARM INCIDENT & AUDIT HISTORY PANEL                                   */}
+      {/* ========================================================================= */}
+      <AlarmHistoryPanel />
+
+      {/* ========================================================================= */}
+      {/* 7. FLEET FILTER & MACHINE ASSET GRID                                      */}
       {/* ========================================================================= */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
@@ -772,7 +806,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           )}
         </div>
       </div>
+
+      {/* Alarm Settings Modal */}
+      <AlarmSettingsModal
+        isOpen={isAlarmSettingsOpen}
+        onClose={() => setIsAlarmSettingsOpen(false)}
+      />
     </div>
   );
 };
 export default DashboardPage;
+

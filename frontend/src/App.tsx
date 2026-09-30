@@ -18,12 +18,14 @@ import SettingsPage from './pages/SettingsPage';
 import ManualSensorModal from './components/ManualSensorModal';
 import AddMachineModal from './components/AddMachineModal';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { AlarmProvider, useAlarm } from './context/AlarmContext';
 import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 
 type AppRoute = 'home' | 'signin' | 'signup' | 'workbench';
 
 function MainAppContent() {
   const { user, loading: authLoading, isAuthenticated, userName, logout } = useAuth();
+  const { evaluateFleetTelemetry, isAlarmActive, isAudioMuted, muteAlarm } = useAlarm();
 
   // Route State: 'home' | 'signin' | 'signup' | 'workbench'
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('home');
@@ -178,6 +180,27 @@ function MainAppContent() {
 
     return () => clearInterval(interval);
   }, [autoRefresh, loadFleetData]);
+
+  // Synchronize telemetry feed to the Industrial Alarm Engine
+  useEffect(() => {
+    evaluateFleetTelemetry(machines);
+  }, [machines, evaluateFleetTelemetry]);
+
+  // Keyboard accessibility: Escape or 'm' to quickly mute an active alarm
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = (document.activeElement?.tagName || '').toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return;
+      }
+      if ((e.key === 'Escape' || e.key === 'm' || e.key === 'M') && isAlarmActive && !isAudioMuted) {
+        muteAlarm();
+        showToast('Audible alarm muted by operator', 'alert');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAlarmActive, isAudioMuted, muteAlarm]);
 
   // Navigation handlers
   const handleSelectTab = (tab: NavTab) => {
@@ -465,9 +488,12 @@ function MainAppContent() {
 export function App() {
   return (
     <AuthProvider>
-      <MainAppContent />
+      <AlarmProvider>
+        <MainAppContent />
+      </AlarmProvider>
     </AuthProvider>
   );
 }
 
 export default App;
+

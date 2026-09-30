@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Machine, SensorReading } from '../types';
+import { Alert, Machine, SensorReading } from '../types';
 import api from '../services/api';
 import {
   Activity,
@@ -27,6 +27,7 @@ import {
   CartesianGrid,
   Tooltip,
 } from 'recharts';
+import { useAlarm } from '../context/AlarmContext';
 
 interface LiveMonitoringPageProps {
   machines: Machine[];
@@ -39,10 +40,15 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
   onSelectMachine,
   onOpenManualModal,
 }) => {
+  const { thresholds, activeCriticalAlarms, activeWarnings } = useAlarm();
   const [selectedMachineId, setSelectedMachineId] = useState<string>(
     machines.length > 0 ? machines[0].machine_id : 'M001'
   );
   const [liveStream, setLiveStream] = useState<SensorReading[]>([]);
+  const [backendAlertSnapshot, setBackendAlertSnapshot] = useState<{
+    machineId: string;
+    alerts: Alert[];
+  } | null>(null);
   const [isStreaming, setIsStreaming] = useState<boolean>(true);
   const [streamIntervalMs, setStreamIntervalMs] = useState<number>(3000);
   const [packetLogs, setPacketLogs] = useState<Array<{ id: string; time: string; text: string; source: string; status: string }>>([]);
@@ -51,18 +57,27 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
 
   const fetchLiveTick = async () => {
     try {
-      const data = await api.getSensorData(selectedMachineId, 30);
+      const [data, alerts] = await Promise.all([
+        api.getSensorData(selectedMachineId, 30),
+        api.getAlerts(selectedMachineId, 'ACTIVE').catch(() => null),
+      ]);
       setLiveStream(data);
+      if (alerts) setBackendAlertSnapshot({ machineId: selectedMachineId, alerts });
 
       if (data.length > 0) {
         const latest = data[data.length - 1];
+        const isCrit = (latest.temperature !== undefined && latest.temperature >= thresholds.tempCritical) ||
+                       (latest.vibration !== undefined && latest.vibration >= thresholds.vibCritical);
+        const isWarn = (latest.temperature !== undefined && latest.temperature >= thresholds.tempWarning) ||
+                       (latest.vibration !== undefined && latest.vibration >= thresholds.vibWarning);
+
         setPacketLogs((prev) => [
           {
             id: String(latest.id),
             time: new Date(latest.timestamp).toLocaleTimeString(),
             text: `[POSTGRESQL] Machine ${latest.machine_id} (Node: ${latest.device_id}) -> Temp: ${latest.temperature}°C, Vib: ${latest.vibration} mm/s, Current: ${latest.current}A, RPM: ${latest.rpm}`,
-            source: 'ESP32 / REAL_DATA',
-            status: latest.temperature > 80 || latest.vibration > 6 ? 'CRITICAL' : latest.temperature > 74 || latest.vibration > 4 ? 'WARNING' : 'OK',
+            source: `${latest.source || 'DEVICE'} / REAL_DATA`,
+            status: isCrit ? 'CRITICAL' : isWarn ? 'WARNING' : 'OK',
           },
           ...prev.slice(0, 25),
         ]);
@@ -90,6 +105,25 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
   }));
 
   const latestReading = liveStream.length > 0 ? liveStream[liveStream.length - 1] : null;
+  const backendAlerts = backendAlertSnapshot?.machineId === selectedMachineId
+    ? backendAlertSnapshot.alerts
+    : null;
+  const selectedCriticalAlarms = activeCriticalAlarms.filter((alarm) => alarm.machineId === selectedMachineId);
+  const selectedWarnings = activeWarnings.filter((alarm) => alarm.machineId === selectedMachineId);
+  const analysisStatus = selectedCriticalAlarms.length > 0
+    ? 'CRITICAL'
+    : selectedWarnings.length > 0
+      ? 'WARNING'
+      : latestReading
+        ? 'NORMAL'
+        : 'WAITING';
+  const analysisTone = analysisStatus === 'CRITICAL'
+    ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+    : analysisStatus === 'WARNING'
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+      : analysisStatus === 'NORMAL'
+        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+        : 'border-slate-700 bg-slate-800 text-slate-400';
 
   return (
     <div id="live-monitoring-page" className="space-y-6">
@@ -226,6 +260,93 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
           )}
         </div>
       </div>
+
+      {/* Current configured-threshold analysis and persisted backend alerts */}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-lg" aria-label="Live telemetry analysis">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-white">Live Sensor Analysis</h3>
+              <span className={`rounded-md border px-2 py-1 text-[11px] font-bold uppercase ${analysisTone}`}>
+                {analysisStatus}
+              </span>
+              {activeMachine && (
+                <span className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] font-semibold text-slate-300">
+                  Backend: {activeMachine.status}
+                </span>
+              )}
+            </div>
+            {latestReading ? (
+              <>
+                <p className="mt-2 text-xs text-slate-400">
+                  Latest stored sample: {latestReading.device_id}
+                  {latestReading.source ? ` (${latestReading.source})` : ''} at{' '}
+                  {new Date(latestReading.timestamp).toLocaleString()}.
+                </p>
+                <p className="mt-2 text-sm text-slate-200">
+                  {analysisStatus === 'CRITICAL'
+                    ? `${selectedCriticalAlarms.length} configured critical threshold${selectedCriticalAlarms.length === 1 ? '' : 's'} exceeded.`
+                    : analysisStatus === 'WARNING'
+                      ? `${selectedWarnings.length} configured warning threshold${selectedWarnings.length === 1 ? '' : 's'} exceeded.`
+                      : 'No configured temperature or vibration thresholds are currently exceeded.'}
+                </p>
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Limits: temperature warning {thresholds.tempWarning.toFixed(1)}°C / critical {thresholds.tempCritical.toFixed(1)}°C;
+                  {' '}vibration warning {thresholds.vibWarning.toFixed(2)} / critical {thresholds.vibCritical.toFixed(2)} mm/s RMS.
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 text-xs text-slate-400">Waiting for a real stored sensor reading for this machine.</p>
+            )}
+            {(selectedCriticalAlarms.length > 0 || selectedWarnings.length > 0) && (
+              <ul className="mt-3 space-y-1.5">
+                {[...selectedCriticalAlarms, ...selectedWarnings].map((alarm) => (
+                  <li key={alarm.id} className="text-xs text-slate-300">
+                    <span className={alarm.severity === 'CRITICAL' ? 'font-bold text-rose-300' : 'font-bold text-amber-300'}>
+                      {alarm.severity}
+                    </span>
+                    {' '}{alarm.channelLabel}: {alarm.currentValue.toFixed(2)} {alarm.unit} (limit {alarm.threshold.toFixed(2)}).
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="w-full border-t border-slate-800 pt-3 lg:w-[min(42%,32rem)] lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">Active PostgreSQL Alerts</h4>
+              <span className="font-mono text-xs text-cyan-300">{backendAlerts?.length ?? '--'}</span>
+            </div>
+            {backendAlerts === null ? (
+              <p className="mt-2 text-xs text-slate-500">Loading active alerts for this machine...</p>
+            ) : backendAlerts.length === 0 ? (
+              <p className="mt-2 text-xs text-slate-500">No active backend alerts recorded for this machine.</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {backendAlerts.slice(0, 3).map((alert) => (
+                  <li key={alert.id} className="flex items-start gap-2 text-xs">
+                    {alert.severity === 'Critical'
+                      ? <AlertOctagon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-400" />
+                      : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />}
+                    <span className="min-w-0 text-slate-300">
+                      <span className={alert.severity === 'Critical' ? 'font-bold text-rose-300' : 'font-bold text-amber-300'}>
+                        {alert.severity}
+                      </span>
+                      {' '}{alert.message}
+                      <span className="mt-0.5 block text-[10px] text-slate-500">
+                        Recorded {new Date(alert.created_at).toLocaleString()}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {backendAlerts.length > 3 && (
+              <p className="mt-2 text-[10px] text-slate-500">And {backendAlerts.length - 3} more active alerts.</p>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Grid of All Monitored Fleet Asset Quick Readouts */}
       <div>

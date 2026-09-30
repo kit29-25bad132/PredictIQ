@@ -263,3 +263,71 @@ export interface FeedbackContext {
   prediction_id?: number | null;
   alert_id?: number | null;
 }
+
+// ============================================================================
+// 10. REAL-TIME AUDIO ALARM SYSTEM TYPES
+// ============================================================================
+
+export type AlarmSeverity = 'NORMAL' | 'WARNING' | 'CRITICAL';
+export type TelemetryChannel = 'temperature' | 'vibration' | 'current' | 'rpm';
+
+export interface AlarmThresholds {
+  tempWarning: number;   // °C (default: 70.0)
+  tempCritical: number;  // °C (default: 80.0)
+  vibWarning: number;    // mm/s RMS (default: 4.5)
+  vibCritical: number;   // mm/s RMS (default: 6.0)
+}
+
+export interface AlarmAudioSettings {
+  frequency: number;       // Hz (e.g. 880)
+  pulseDurationMs: number; // ms (e.g. 180)
+  intervalMs: number;      // ms (e.g. 700)
+  volume: number;          // 0.0 - 1.0 (e.g. 0.8)
+  soundEnabled: boolean;   // global toggle
+}
+
+export interface ActiveCriticalAlarm {
+  id: string;
+  machineId: string;
+  machineName?: string;
+  channel: TelemetryChannel;
+  channelLabel: string;
+  currentValue: number;
+  threshold: number;
+  unit: string;
+  timestamp: string;
+  severity: 'CRITICAL';
+  source?: DataSource;
+}
+
+export interface ActiveWarningAlarm {
+  id: string;
+  machineId: string;
+  machineName?: string;
+  channel: TelemetryChannel;
+  channelLabel: string;
+  currentValue: number;
+  threshold: number;
+  unit: string;
+  timestamp: string;
+  severity: 'WARNING';
+  source?: DataSource;
+}
+
+export interface AlarmIncidentRecord {
+  id: string;
+  machineId: string;
+  machineName: string;
+  deviceId: string;
+  source: string;
+  alarmType: string;
+  sensorReading: number;
+  configuredThreshold: number;
+  unit: string;
+  severity: 'Critical' | 'Warning';
+  timestamp: string;
+  status: 'ACTIVE' | 'ACKNOWLEDGED' | 'RESOLVED';
+  isAudioMuted: boolean;
+  resolvedAt?: string | null;
+}
+

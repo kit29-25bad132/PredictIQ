@@ -11,7 +11,9 @@ import {
   RefreshCw,
   Clock,
   Database,
-  ClipboardCheck
+  ClipboardCheck,
+  KeyRound,
+  Loader2
 } from 'lucide-react';
 
 interface AlertsPageProps {
@@ -32,6 +34,12 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [operatorPassword, setOperatorPassword] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [pendingAction, setPendingAction] = useState<{
+    alertId: number | string;
+    action: 'acknowledge' | 'resolve';
+  } | null>(null);
 
   const fetchAlerts = async () => {
     setIsLoading(true);
@@ -52,23 +60,42 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  const handleAcknowledge = async (alertId: number | string) => {
+  const runAlertAction = async (alertId: number | string, action: 'acknowledge' | 'resolve') => {
     setActionError(null);
     try {
-      await api.acknowledgeAlert(alertId);
-      fetchAlerts();
+      if (action === 'acknowledge') {
+        await api.acknowledgeAlert(alertId);
+      } else {
+        await api.resolveAlert(alertId);
+      }
+      setPendingAction(null);
+      await fetchAlerts();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to acknowledge alert.');
+      const message = err.message || `Failed to ${action} alert.`;
+      if (/operator session (required|expired|.*invalid)/i.test(message)) {
+        setPendingAction({ alertId, action });
+        setActionError('Authenticate your backend operator session to continue.');
+      } else {
+        setActionError(message);
+      }
     }
   };
 
-  const handleResolve = async (alertId: number | string) => {
+  const handleOperatorAuthentication = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!pendingAction || !operatorPassword) return;
+
+    setIsAuthenticating(true);
     setActionError(null);
     try {
-      await api.resolveAlert(alertId);
-      fetchAlerts();
+      await api.login(operatorPassword);
+      setOperatorPassword('');
+      const { alertId, action } = pendingAction;
+      await runAlertAction(alertId, action);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to resolve alert.');
+      setActionError(err.message || 'Operator authentication failed.');
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
@@ -176,6 +203,31 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
       {actionError && (
         <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-300">
           {actionError}
+          {pendingAction && (
+            <form onSubmit={handleOperatorAuthentication} className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <label htmlFor="operator-session-password" className="sr-only">
+                Backend operator password
+              </label>
+              <input
+                id="operator-session-password"
+                type="password"
+                autoComplete="current-password"
+                value={operatorPassword}
+                onChange={(event) => setOperatorPassword(event.target.value)}
+                placeholder="Backend operator password"
+                required
+                className="min-w-0 flex-1 rounded-lg border border-rose-500/30 bg-slate-950 px-3 py-2 text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={isAuthenticating || !operatorPassword}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 font-semibold text-cyan-200 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isAuthenticating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+                Authenticate &amp; retry
+              </button>
+            </form>
+          )}
         </div>
       )}
       <div className="space-y-3">
@@ -265,14 +317,14 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
                       <>
                         {!isAck && (
                           <button
-                            onClick={() => handleAcknowledge(alert.id)}
+                            onClick={() => runAlertAction(alert.id, 'acknowledge')}
                             className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 hover:text-white"
                           >
                             Acknowledge
                           </button>
                         )}
                         <button
-                          onClick={() => handleResolve(alert.id)}
+                          onClick={() => runAlertAction(alert.id, 'resolve')}
                           className="flex items-center gap-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500 hover:text-slate-950 transition-all"
                         >
                           <Check className="h-3.5 w-3.5" />

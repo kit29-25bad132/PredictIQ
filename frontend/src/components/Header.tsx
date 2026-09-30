@@ -7,12 +7,16 @@ import {
   Database,
   CheckCircle2,
   AlertCircle,
+  AlertOctagon,
+  Volume2,
+  VolumeX,
   User,
   LogOut,
   ChevronDown,
   Globe,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useAlarm } from '../context/AlarmContext';
 
 interface HeaderProps {
   activeTab: string;
@@ -38,6 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
   onNavigateHome,
 }) => {
   const { user, userName, initials, photoURL, logout } = useAuth();
+  const { isAlarmActive, isAudioPlaying, isAudioMuted, muteAlarm, unmuteAlarm } = useAlarm();
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
 
   const getPageTitle = () => {
@@ -110,6 +115,31 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
         </div>
+
+        {/* Audible Alarm Quick Indicator & Mute Button */}
+        {isAlarmActive ? (
+          isAudioMuted ? (
+            <button
+              id="btn-header-unmute-alarm"
+              onClick={unmuteAlarm}
+              title="Critical alarm active (Audio Muted) - Click to unmute sound"
+              className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/20 px-2.5 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition-all shadow-sm"
+            >
+              <VolumeX className="h-3.5 w-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Muted</span>
+            </button>
+          ) : (
+            <button
+              id="btn-header-mute-alarm"
+              onClick={muteAlarm}
+              title="Audible alarm is BEEPING - Click to MUTE sound immediately"
+              className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-black text-white hover:bg-rose-500 transition-all shadow-md shadow-rose-600/30 animate-pulse"
+            >
+              <Volume2 className="h-3.5 w-3.5" />
+              <span>MUTE ALARM</span>
+            </button>
+          )
+        ) : null}
 
         {/* Live Auto-Refresh Controller */}
         <button

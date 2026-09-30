@@ -8,8 +8,14 @@ import {
   CheckCircle2,
   AlertCircle,
   Radio,
+  Volume2,
+  Flame,
+  Sliders,
+  Play,
 } from 'lucide-react';
 import api from '../services/api';
+import { useAlarm } from '../context/AlarmContext';
+import AlarmSettingsModal from '../components/AlarmSettingsModal';
 
 interface SystemStatus {
   backend: 'loading' | 'online' | 'offline';
@@ -23,6 +29,14 @@ interface SystemStatus {
 }
 
 export const SettingsPage: React.FC = () => {
+  const {
+    thresholds,
+    audioSettings,
+    audioState,
+    enableAudio,
+    playTestBeep,
+  } = useAlarm();
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [status, setStatus] = useState<SystemStatus>({
     backend: 'loading',
     backendInfo: '',
@@ -166,8 +180,93 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Industrial Audio Alarm System Settings & Diagnostics */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <Volume2 className="h-5 w-5 text-rose-400" /> Industrial Audio Alarm System
+          </h3>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => playTestBeep()}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-all shadow-sm"
+            >
+              <Play className="h-3.5 w-3.5 text-cyan-400" />
+              <span>Test Audio Tone</span>
+            </button>
+            <button
+              onClick={() => setIsSettingsModalOpen(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
+            >
+              <Sliders className="h-3.5 w-3.5" />
+              <span>Configure Thresholds</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Audio Engine Status */}
+          <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <Volume2 className={`h-5 w-5 shrink-0 ${audioState === 'running' ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <div>
+              <div className="text-xs font-bold text-slate-300">Web Audio API</div>
+              <div className={`text-xs font-mono font-bold ${audioState === 'running' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                {audioState === 'running' ? 'ACTIVE & READY' : audioState.toUpperCase()}
+              </div>
+              {audioState === 'suspended' && (
+                <button
+                  onClick={enableAudio}
+                  className="mt-1 text-[11px] font-bold text-yellow-400 underline hover:text-yellow-300"
+                >
+                  Enable Audio Output
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Temp Thresholds */}
+          <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <Flame className="h-5 w-5 text-amber-400 shrink-0" />
+            <div>
+              <div className="text-xs font-bold text-slate-300">Temperature Limits</div>
+              <div className="text-xs font-mono text-slate-200">
+                Warn: <strong className="text-amber-400">{thresholds.tempWarning.toFixed(1)}°C</strong> | Crit: <strong className="text-rose-400">{thresholds.tempCritical.toFixed(1)}°C</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Vib Thresholds */}
+          <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <Activity className="h-5 w-5 text-rose-400 shrink-0" />
+            <div>
+              <div className="text-xs font-bold text-slate-300">Vibration Limits</div>
+              <div className="text-xs font-mono text-slate-200">
+                Warn: <strong className="text-amber-400">{thresholds.vibWarning.toFixed(2)}</strong> | Crit: <strong className="text-rose-400">{thresholds.vibCritical.toFixed(2)} mm/s</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Beep Synth Parameters */}
+          <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <Sliders className="h-5 w-5 text-cyan-400 shrink-0" />
+            <div>
+              <div className="text-xs font-bold text-slate-300">Tone Synthesis</div>
+              <div className="text-xs font-mono text-slate-200">
+                {audioSettings.frequency}Hz &middot; {audioSettings.intervalMs}ms &middot; {Math.round(audioSettings.volume * 100)}% vol
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <AlarmSettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+      />
     </div>
   );
 };
 
 export default SettingsPage;
+
