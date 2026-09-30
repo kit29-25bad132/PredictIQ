@@ -666,6 +666,15 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
               <BarChart2 className="h-3.5 w-3.5 text-cyan-400" />
               <span className="capitalize">{chartType}</span>
             </button>
+
+            {/* Reset Wave Buffer */}
+            <button
+              onClick={initializeBuffer}
+              className="rounded-xl border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-400 hover:text-white transition-all flex items-center gap-1"
+              title="Reset Wave Buffer"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
 
@@ -998,131 +1007,8 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
           </ResponsiveContainer>
         </div>
 
-        {/* 2-Minute Simulation Timeline & Phase Quick-Jump Controls */}
-        <div className="space-y-2 pt-3 border-t border-slate-800/80">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <SlidersHorizontal className="h-4 w-4 text-cyan-400" />
-              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                2-Minute Simulation Cycle (0:00 – 2:00 Loop):
-              </span>
-            </div>
-            <span className="text-[11px] font-mono text-cyan-300 font-bold bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
-              Loop Period: 120s (Auto-Repeats at 2:00)
-            </span>
-          </div>
-
-          {/* Phase Quick-Jump Buttons */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {/* Phase 1: 0:00-0:50 NORMAL */}
-            <button
-              onClick={() => {
-                tickCounterRef.current = 0;
-                setSimulationMode('normal');
-              }}
-              className="flex flex-col items-start p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/20 hover:bg-emerald-900/30 text-left transition-all group"
-            >
-              <div className="flex items-center justify-between w-full">
-                <span className="text-xs font-bold text-emerald-400">0:00–0:50 NORMAL</span>
-                <span className="text-[10px] font-mono text-emerald-300/70">50s</span>
-              </div>
-              <span className="text-[10px] text-slate-400 mt-1">
-                Temp: 25–45°C &bull; Vib: 0–1.5 m/s² &bull; Curr: 0.2–2A &bull; RPM: 70–100%
-              </span>
-            </button>
-
-            {/* Phase 2: 0:50-1:00 WARNING */}
-            <button
-              onClick={() => {
-                tickCounterRef.current = Math.round(50 * (1000 / streamIntervalMs));
-                setSimulationMode('normal');
-              }}
-              className="flex flex-col items-start p-2.5 rounded-xl border border-amber-500/30 bg-amber-950/20 hover:bg-amber-900/30 text-left transition-all group"
-            >
-              <div className="flex items-center justify-between w-full">
-                <span className="text-xs font-bold text-amber-400">0:50–1:00 WARNING</span>
-                <span className="text-[10px] font-mono text-amber-300/70">10s</span>
-              </div>
-              <span className="text-[10px] text-slate-400 mt-1">
-                Temp: 45–60°C &bull; Vib: 1.5–3.0 m/s² &bull; Curr: 2–3A &bull; RPM: 50–70%
-              </span>
-            </button>
-
-            {/* Phase 3: 1:00-1:10 CRITICAL */}
-            <button
-              onClick={() => {
-                tickCounterRef.current = Math.round(60 * (1000 / streamIntervalMs));
-                setSimulationMode('normal');
-              }}
-              className="flex flex-col items-start p-2.5 rounded-xl border border-rose-500/40 bg-rose-950/30 hover:bg-rose-900/40 text-left transition-all group"
-            >
-              <div className="flex items-center justify-between w-full">
-                <span className="text-xs font-bold text-rose-400">1:00–1:10 CRITICAL</span>
-                <span className="text-[10px] font-mono text-rose-300/70">10s</span>
-              </div>
-              <span className="text-[10px] text-slate-400 mt-1">
-                Temp: &gt;60°C &bull; Vib: &gt;3.0 m/s² &bull; Curr: &gt;3A &bull; RPM: &lt;50%
-              </span>
-            </button>
-
-            {/* Phase 4: 1:10-2:00 RECOVERY */}
-            <button
-              onClick={() => {
-                tickCounterRef.current = Math.round(70 * (1000 / streamIntervalMs));
-                setSimulationMode('normal');
-              }}
-              className="flex flex-col items-start p-2.5 rounded-xl border border-cyan-500/30 bg-cyan-950/20 hover:bg-cyan-900/30 text-left transition-all group"
-            >
-              <div className="flex items-center justify-between w-full">
-                <span className="text-xs font-bold text-cyan-400">1:10–2:00 RECOVERY</span>
-                <span className="text-[10px] font-mono text-cyan-300/70">50s</span>
-              </div>
-              <span className="text-[10px] text-slate-400 mt-1">
-                Values gradually cool down and return toward normal baseline
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {/* Live Wave Simulation & Scenario Injector */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-400">Other Wave Patterns:</span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setSimulationMode('harmonic')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
-                simulationMode === 'harmonic'
-                  ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40 shadow-sm'
-                  : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
-              }`}
-            >
-              〰️ Harmonic Oscillation
-            </button>
-            <button
-              onClick={() => setSimulationMode('bearing_fault')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
-                simulationMode === 'bearing_fault'
-                  ? 'bg-rose-500/20 text-rose-300 font-bold border border-rose-500/40 shadow-sm'
-                  : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
-              }`}
-            >
-              ⚠️ Vibration Spikes
-            </button>
-            <button
-              onClick={initializeBuffer}
-              className="rounded-xl bg-slate-950 p-1.5 text-slate-400 hover:text-white border border-slate-800 transition-all"
-              title="Reset Wave Buffer"
-            >
-              <RotateCcw className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
         {/* Waveform Signal Diagnostics Summary Bar */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1 border-t border-slate-800/80">
           <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
             <div className="text-[10px] text-slate-400 uppercase font-semibold">ISO 10816-3 Assessment</div>
             <div className={`text-xs font-bold mt-1 ${analysisMetrics.isoColor}`}>
