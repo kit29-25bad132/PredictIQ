@@ -8,6 +8,7 @@ import AuthPage from './pages/AuthPage';
 import DashboardPage from './pages/DashboardPage';
 import MachinesPage from './pages/MachinesPage';
 import MachineDetailsPage from './pages/MachineDetailsPage';
+import Machine3DViewPage from './pages/Machine3DViewPage';
 import LiveMonitoringPage from './pages/LiveMonitoringPage';
 import PredictionsPage from './pages/PredictionsPage';
 import MaintenancePage from './pages/MaintenancePage';
@@ -72,6 +73,7 @@ function MainAppContent() {
       setCurrentRoute('signup');
     } else if (
       path === '/dashboard' ||
+      path === '/3d-view' ||
       path === '/machines' ||
       path === '/machine-details' ||
       path === '/monitoring' ||
@@ -367,6 +369,14 @@ function MainAppContent() {
             />
           )}
 
+          {activeTab === '3d-view' && (
+            <Machine3DViewPage
+              machines={machines}
+              initialMachineId={selectedMachineId}
+              onSelectMachine={handleSelectMachine}
+            />
+          )}
+
           {activeTab === 'machines' && (
             <MachinesPage
               machines={machines}
@@ -383,6 +393,10 @@ function MainAppContent() {
               onSelectMachine={setSelectedMachineId}
               onBackToDashboard={() => handleSelectTab('dashboard')}
               onOpenManualModal={handleOpenManualModal}
+              onNavigate3DView={(id) => {
+                setSelectedMachineId(id);
+                handleSelectTab('3d-view');
+              }}
             />
           )}
 

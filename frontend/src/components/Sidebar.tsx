@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   LayoutDashboard,
+  Box,
   Cpu,
   LineChart,
   Activity,
@@ -20,6 +21,7 @@ import { useAuth } from '../context/AuthContext';
 
 export type NavTab = 
   | 'dashboard'
+  | '3d-view'
   | 'machines'
   | 'machine-details'
   | 'monitoring'
@@ -61,6 +63,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Dashboard',
       icon: LayoutDashboard,
       badge: null,
+    },
+    {
+      id: '3d-view' as NavTab,
+      label: '3D Machine View',
+      icon: Box,
+      badge: '3D',
+      badgeColor: 'purple',
     },
     {
       id: 'machines' as NavTab,
