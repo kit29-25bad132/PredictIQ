@@ -818,3 +818,73 @@ class TestTrainModelUnchanged:
         body = response.json()
         assert body["success"] is False
         assert body["refusal"] == "insufficient_labeled_data"
+
+
+# ============================================================================
+# 8. AI Maintenance Assistant Live Chat
+# ============================================================================
+
+class TestAssistantChatEndpoint:
+    def test_assistant_chat_returns_ai_reply(self, client, monkeypatch):
+        testclient, factory = client
+        seed_machine(factory, machine_id="M001", with_readings=True)
+        monkeypatch.setattr(get_settings(), "gemini_api_key", "test-gemini-key")
+
+        fake_chat_response = json.dumps({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "Current machine M001 is operating within normal vibration parameters."}
+                        ]
+                    }
+                }
+            ]
+        })
+        _patch_transport(lambda self, url, body: fake_chat_response)
+        try:
+            response = testclient.post(
+                "/api/assistant/chat",
+                json={
+                    "machine_id": "M001",
+                    "message": "What is the vibration level?",
+                    "history": [],
+                },
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert "M001" in data["reply"] or "vibration" in data["reply"]
+            assert data["machine_id"] == "M001"
+            assert "timestamp" in data
+        finally:
+            _unpatch_transport()
+
+    def test_assistant_chat_handles_general_query(self, client, monkeypatch):
+        testclient, _ = client
+        monkeypatch.setattr(get_settings(), "gemini_api_key", "test-gemini-key")
+
+        fake_chat_response = json.dumps({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "The current time is 09:15 AM."}
+                        ]
+                    }
+                }
+            ]
+        })
+        _patch_transport(lambda self, url, body: fake_chat_response)
+        try:
+            response = testclient.post(
+                "/api/assistant/chat",
+                json={
+                    "message": "time",
+                },
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert "09:15 AM" in data["reply"]
+        finally:
+            _unpatch_transport()
+

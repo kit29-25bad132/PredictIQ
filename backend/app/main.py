@@ -32,7 +32,7 @@ from backend.app.db.models import (
     MaintenanceRecord,
     SensorReading,
 )
-from backend.app.api import alerts, machines, maintenance, predictions, sensors, feedback, health, auth, operator
+from backend.app.api import alerts, machines, maintenance, predictions, sensors, feedback, health, auth, operator, assistant
 
 settings = get_settings()
 
@@ -74,6 +74,7 @@ app.include_router(feedback.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(operator.router, prefix="/api/operator")
+app.include_router(assistant.router, prefix="/api")
 
 
 def _liveness_db():

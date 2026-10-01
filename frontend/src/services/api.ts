@@ -384,6 +384,31 @@ class PredictIQApiService {
     const query = machineId ? `?machine_id=${encodeURIComponent(machineId)}` : '';
     return this.fetchJson<Prediction[]>(`/predictions${query}`);
   }
+
+  // =========================================================================
+  // 10. AI MAINTENANCE ASSISTANT LIVE CHAT (GEMINI POWERED)
+  // =========================================================================
+  public async chatWithAssistant(
+    message: string,
+    machineId?: string,
+    history?: { sender: 'user' | 'assistant'; text: string; timestamp?: string }[]
+  ): Promise<{ reply: string; machine_id?: string; timestamp: string; model?: string }> {
+    return this.fetchJson<{ reply: string; machine_id?: string; timestamp: string; model?: string }>(
+      '/assistant/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          message,
+          machine_id: machineId,
+          history: (history || []).map((h) => ({
+            sender: h.sender,
+            text: h.text,
+            timestamp: h.timestamp,
+          })),
+        }),
+      }
+    );
+  }
 }
 
 export const api = new PredictIQApiService();

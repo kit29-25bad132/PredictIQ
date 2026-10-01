@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Machine, SensorReading, Alert, Prediction } from '../types';
 import api from '../services/api';
 import { useAlarm } from '../context/AlarmContext';
@@ -235,7 +235,16 @@ export const Machine3DViewPage: React.FC<Machine3DViewPageProps> = ({
     });
   }, [historyReadings]);
 
-  // AI Maintenance Assistant Message Handler
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll chat to latest message
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages, isAiThinking]);
+
+  // AI Maintenance Assistant Message Handler (Live Gemini Integration)
   const handleSendMessage = async (textToSend?: string) => {
     const query = (textToSend || chatInput).trim();
     if (!query) return;
@@ -247,43 +256,55 @@ export const Machine3DViewPage: React.FC<Machine3DViewPageProps> = ({
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    setChatMessages((prev) => [...prev, userMsg]);
+    const updatedHistory = [...chatMessages, userMsg];
+    setChatMessages(updatedHistory);
     setChatInput('');
     setIsAiThinking(true);
 
     try {
-      // Simulate intelligent contextual telemetry reasoning grounded strictly in real sensor values
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      // Live call to Gemini via Backend API
+      const res = await api.chatWithAssistant(query, selectedMachineId, updatedHistory);
+      const aiReply = res.reply || 'No response generated from AI assistant.';
 
-      let replyText = '';
+      const aiMsg: ChatMessage = {
+        id: `ai-${Date.now()}`,
+        sender: 'assistant',
+        text: aiReply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+
+      setChatMessages((prev) => [...prev, aiMsg]);
+    } catch (err: any) {
+      console.warn('[AI Assistant] Live chat request failed, falling back to real telemetry calculation:', err);
+      let fallbackText = '';
       const qLower = query.toLowerCase();
 
-      if (qLower.includes('vibration') || qLower.includes('vib')) {
-        replyText = `Current vibration is ${vibVal.toFixed(2)} m/s² (Source: ${sourceLabel}). ${
+      if (qLower.includes('time')) {
+        fallbackText = `The current system time is ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.`;
+      } else if (qLower.includes('vibration') || qLower.includes('vib')) {
+        fallbackText = `Current vibration is ${vibVal.toFixed(2)} mm/s RMS (Source: ${sourceLabel}). ${
           vibVal >= (thresholds.vibWarning || 1.5)
             ? 'Vibration is slightly elevated above nominal limits. Recommended action: inspect Drive-End (DE) bearing races and verify mounting bolt torques.'
             : 'Vibration is within nominal operating tolerances. Harmonic FFT spectrum shows steady bearing race stability.'
         }`;
       } else if (qLower.includes('temperature') || qLower.includes('temp') || qLower.includes('hot')) {
-        replyText = `Current thermal reading is ${tempVal.toFixed(1)}°C (Limit: ${thresholds.tempWarning}° / ${thresholds.tempCritical}°C). Thermal dissipation across stator cooling fins is ${
+        fallbackText = `Current thermal reading is ${tempVal.toFixed(1)}°C (Limit: ${thresholds.tempWarning}° / ${thresholds.tempCritical}°C). Thermal dissipation across stator cooling fins is ${
           tempVal < thresholds.tempWarning ? 'optimal and healthy.' : 'elevated. Check cooling fan cowl for dust clogging.'
         }`;
       } else if (qLower.includes('inspect') || qLower.includes('maintenance')) {
-        replyText = `Recommended maintenance checklist for ${selectedMachineId}:\n1. Inspect Bearing (DE) lubrication level\n2. Verify 3-phase current balance (${currVal.toFixed(1)} A)\n3. Check shaft coupling alignment at ${Math.round(rpmVal)} RPM.`;
+        fallbackText = `Recommended maintenance checklist for ${selectedMachineId}:\n1. Inspect Bearing (DE) lubrication level\n2. Verify 3-phase current balance (${currVal.toFixed(1)} A)\n3. Check shaft coupling alignment at ${Math.round(rpmVal)} RPM.`;
       } else {
-        replyText = `Machine ${selectedMachineId} status is currently ${healthMetrics.statusText} (${healthMetrics.score}% health score). Telemetry: Temp ${tempVal.toFixed(1)}°C, Vib ${vibVal.toFixed(2)} m/s², Curr ${currVal.toFixed(1)}A, Speed ${Math.round(rpmVal)} RPM. All systems are logged in PostgreSQL.`;
+        fallbackText = `Machine ${selectedMachineId} status is currently ${healthMetrics.statusText} (${healthMetrics.score}% health score). Telemetry: Temp ${tempVal.toFixed(1)}°C, Vib ${vibVal.toFixed(2)} mm/s RMS, Curr ${currVal.toFixed(1)}A, Speed ${Math.round(rpmVal)} RPM. All systems are logged in PostgreSQL.`;
       }
 
       const aiMsg: ChatMessage = {
         id: `ai-${Date.now()}`,
         sender: 'assistant',
-        text: replyText,
+        text: fallbackText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
       setChatMessages((prev) => [...prev, aiMsg]);
-    } catch (err) {
-      console.error('AI chat failed:', err);
     } finally {
       setIsAiThinking(false);
     }
@@ -896,7 +917,7 @@ export const Machine3DViewPage: React.FC<Machine3DViewPageProps> = ({
           </div>
 
           {/* Chat Messages Feed */}
-          <div className="h-40 overflow-y-auto space-y-2 pr-1 text-xs scrollbar-thin scrollbar-thumb-slate-800">
+          <div ref={chatScrollRef} className="h-40 overflow-y-auto space-y-2 pr-1 text-xs scrollbar-thin scrollbar-thumb-slate-800">
             {chatMessages.map((msg) => (
               <div
                 key={msg.id}
