@@ -20,6 +20,7 @@ import ManualSensorModal from './components/ManualSensorModal';
 import AddMachineModal from './components/AddMachineModal';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AlarmProvider, useAlarm } from './context/AlarmContext';
+import { SimulationProvider } from './context/SimulationContext';
 import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 
 type AppRoute = 'home' | 'signin' | 'signup' | 'workbench';
@@ -450,7 +451,7 @@ function MainAppContent() {
           )}
 
           {activeTab === 'settings' && (
-            <SettingsPage />
+            <SettingsPage machines={machines} />
           )}
         </main>
       </div>
@@ -503,7 +504,9 @@ export function App() {
   return (
     <AuthProvider>
       <AlarmProvider>
-        <MainAppContent />
+        <SimulationProvider>
+          <MainAppContent />
+        </SimulationProvider>
       </AlarmProvider>
     </AuthProvider>
   );

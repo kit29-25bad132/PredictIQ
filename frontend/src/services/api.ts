@@ -409,6 +409,26 @@ class PredictIQApiService {
       }
     );
   }
+
+  // =========================================================================
+  // 11. DIGITAL TWIN DYNAMIC SIMULATION CONFIGURATION
+  // =========================================================================
+  public async getSimulationConfig(machineId: string): Promise<MachineSimulationConfig> {
+    return this.fetchJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config`);
+  }
+
+  public async saveSimulationConfig(machineId: string, config: Partial<MachineSimulationConfig>): Promise<MachineSimulationConfig> {
+    return this.fetchJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  public async resetSimulationConfig(machineId: string): Promise<MachineSimulationConfig> {
+    return this.fetchJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config/reset`, {
+      method: 'POST',
+    });
+  }
 }
 
 export const api = new PredictIQApiService();

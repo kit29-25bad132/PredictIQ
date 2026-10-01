@@ -32,13 +32,21 @@ from backend.app.db.models import (
     MaintenanceRecord,
     SensorReading,
 )
-from backend.app.api import alerts, machines, maintenance, predictions, sensors, feedback, health, auth, operator, assistant
+from backend.app.api import alerts, machines, maintenance, predictions, sensors, feedback, health, auth, operator, assistant, simulation
+from backend.app.db.database import Base, engine
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure database schema is up-to-date
+    if engine is not None:
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception as e:
+            print(f"Warning: Database auto-migration: {e}")
+
     # Honest startup signal: log once whether the write gate is active so an
     # unauthenticated deployment is visible in container logs, not silent.
     if settings.device_api_key:
@@ -75,6 +83,7 @@ app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(operator.router, prefix="/api/operator")
 app.include_router(assistant.router, prefix="/api")
+app.include_router(simulation.router, prefix="/api")
 
 
 def _liveness_db():

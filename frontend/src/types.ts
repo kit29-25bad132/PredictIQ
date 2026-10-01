@@ -335,3 +335,93 @@ export interface AlarmIncidentRecord {
   resolvedAt?: string | null;
 }
 
+// ============================================================================
+// DIGITAL TWIN DYNAMIC SIMULATION CONFIGURATION
+// ============================================================================
+export type SimulationMode = 'cycling' | 'increasing' | 'decreasing' | 'harmonic' | 'bearing_fault' | 'random_walk';
+
+export interface MachineSimulationConfig {
+  id?: number;
+  machine_id: string;
+  motor_powered: boolean;
+  simulation_mode: SimulationMode;
+  update_interval_ms: number;
+
+  // 1. Temperature (°C)
+  temp_min: number;
+  temp_max: number;
+  temp_target: number;
+  temp_step: number;
+  temp_warning: number;
+  temp_critical: number;
+
+  // 2. Motor Current (A)
+  current_min: number;
+  current_max: number;
+  current_target: number;
+  current_step: number;
+  current_warning: number;
+  current_critical: number;
+
+  // 3. RPM (Rotational speed)
+  rpm_min: number;
+  rpm_max: number;
+  rpm_target: number;
+  rpm_step: number;
+  rpm_rated: number;
+  rpm_warning: number;
+  rpm_critical: number;
+
+  // 4. Vibration (m/s² RMS)
+  vib_min: number;
+  vib_max: number;
+  vib_target: number;
+  vib_step: number;
+  vib_warning: number;
+  vib_critical: number;
+
+  updated_at?: string;
+  created_at?: string;
+}
+
+export const DEFAULT_SIMULATION_CONFIG: MachineSimulationConfig = {
+  machine_id: 'M001',
+  motor_powered: true,
+  simulation_mode: 'cycling',
+  update_interval_ms: 1000,
+
+  // Temperature (°C)
+  temp_min: 22.0,
+  temp_max: 45.0,
+  temp_target: 32.0,
+  temp_step: 0.2,
+  temp_warning: 45.0,
+  temp_critical: 60.0,
+
+  // Current (A)
+  current_min: 0.2,
+  current_max: 3.0,
+  current_target: 1.2,
+  current_step: 0.1,
+  current_warning: 2.0,
+  current_critical: 3.0,
+
+  // RPM
+  rpm_min: 0.0,
+  rpm_max: 1800.0,
+  rpm_target: 1450.0,
+  rpm_step: 50.0,
+  rpm_rated: 1500.0,
+  rpm_warning: 1050.0,
+  rpm_critical: 750.0,
+
+  // Vibration (m/s² RMS)
+  vib_min: 0.1,
+  vib_max: 5.0,
+  vib_target: 0.8,
+  vib_step: 0.05,
+  vib_warning: 1.5,
+  vib_critical: 3.0,
+};
+
+

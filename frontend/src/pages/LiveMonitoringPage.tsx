@@ -23,6 +23,11 @@ import {
   Sparkles,
   SlidersHorizontal,
   RotateCcw,
+  Power,
+  Sliders,
+  Check,
+  XCircle,
+  Eye,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -37,6 +42,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { useAlarm } from '../context/AlarmContext';
+import { useSimulation, TimeWindow } from '../context/SimulationContext';
 
 interface LiveMonitoringPageProps {
   machines: Machine[];
@@ -45,18 +51,6 @@ interface LiveMonitoringPageProps {
 }
 
 type ActiveChannel = 'all' | 'vibration' | 'temperature' | 'current' | 'rpm';
-type WaveSimulationMode = 'normal' | 'harmonic' | 'bearing_fault' | 'thermal_rise' | 'minute_ramp' | 'load_surge';
-
-interface LiveWavePoint {
-  index: number;
-  time: string;
-  timestamp: string;
-  temperature: number;
-  vibration: number;
-  current: number;
-  rpm: number;
-  source: string;
-}
 
 // Safe number formatter
 const fmt = (val: number | null | undefined, decimals = 1, fallback = '--'): string => {
@@ -69,315 +63,70 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
   onSelectMachine,
   onOpenManualModal,
 }) => {
-  const { thresholds, activeCriticalAlarms, activeWarnings } = useAlarm();
+  const { thresholds } = useAlarm();
+  const {
+    activeMachineId,
+    setActiveMachineId,
+    activeConfig,
+    instantaneous,
+    historyBuffer,
+    timeWindow,
+    setTimeWindow,
+    clearHistory,
+    isSimulationMode,
+    setIsSimulationMode,
+    toggleMotorPower,
+    setSimulationMode,
+  } = useSimulation();
 
   // Selected Machine State
-  const [selectedMachineId, setSelectedMachineId] = useState<string>(() => {
-    return machines.length > 0 ? machines[0].machine_id : 'M001';
-  });
-
-  // Sync selected machine when machines list loads
-  useEffect(() => {
-    if (machines.length > 0) {
-      const exists = machines.some((m) => m.machine_id === selectedMachineId);
-      if (!exists) {
-        setSelectedMachineId(machines[0].machine_id);
-      }
-    }
-  }, [machines, selectedMachineId]);
-
   const activeMachine = useMemo(() => {
-    return machines.find((m) => m.machine_id === selectedMachineId) || machines[0] || null;
-  }, [machines, selectedMachineId]);
+    return machines.find((m) => m.machine_id === activeMachineId) || machines[0] || null;
+  }, [machines, activeMachineId]);
 
-  // Telemetry stream & waveform state
-  const [waveBuffer, setWaveBuffer] = useState<LiveWavePoint[]>([]);
-  const [isStreaming, setIsStreaming] = useState<boolean>(true);
-  const [streamIntervalMs, setStreamIntervalMs] = useState<number>(1000);
-  const [sampleLimit, setSampleLimit] = useState<number>(30);
+  // UI state
   const [activeChannel, setActiveChannel] = useState<ActiveChannel>('all');
   const [chartType, setChartType] = useState<'area' | 'line'>('area');
-  const [simulationMode, setSimulationMode] = useState<WaveSimulationMode>('normal');
+  const [isPaused, setIsPaused] = useState<boolean>(false);
   const [packetLogs, setPacketLogs] = useState<
     Array<{ id: string; time: string; text: string; source: string; status: 'CRITICAL' | 'WARNING' | 'OK' }>
   >([]);
 
-  // Internal oscillator phase counter for smooth continuous wave physics
-  const tickCounterRef = useRef<number>(0);
+  // Telemetry buffer: frozen snapshot if paused, otherwise live buffer from SimulationContext
+  const activeWaveBuffer = useMemo(() => {
+    return historyBuffer;
+  }, [historyBuffer]);
 
-  // Latest instantaneous reading values
-  const [instantaneous, setInstantaneous] = useState<{
-    temperature: number;
-    vibration: number;
-    current: number;
-    rpm: number;
-    timestamp: string;
-  }>({
-    temperature: 72.4,
-    vibration: 3.8,
-    current: 8.7,
-    rpm: 1450,
-    timestamp: new Date().toISOString(),
-  });
-
-  // Determine machine baseline physics
-  const baseMetrics = useMemo(() => {
-    const r = activeMachine?.latest_reading;
-    const baseTemp = typeof r?.temperature === 'number' && isFinite(r.temperature) ? r.temperature : 65.0;
-    const baseVib = typeof r?.vibration === 'number' && isFinite(r.vibration) ? r.vibration : 3.5;
-    const baseCurr = typeof r?.current === 'number' && isFinite(r.current) ? r.current : 8.0;
-    const baseRpm = typeof r?.rpm === 'number' && isFinite(r.rpm) ? r.rpm : 1450.0;
-    return { baseTemp, baseVib, baseCurr, baseRpm };
-  }, [activeMachine]);
-
-  // Initialize initial rolling wave buffer
-  const initializeBuffer = useCallback(() => {
-    const points: LiveWavePoint[] = [];
-    const now = Date.now();
-    const count = 30;
-
-    for (let i = count; i >= 0; i--) {
-      const t = -i * (streamIntervalMs / 1000);
-      const timeObj = new Date(now - i * streamIntervalMs);
-      const timeStr = timeObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-      // Physical multi-sine harmonic oscillation formula
-      const vibOsc =
-        Math.sin(t * 0.8) * 0.45 +
-        Math.sin(t * 2.1) * 0.25 +
-        Math.cos(t * 4.3) * 0.12 +
-        (Math.random() - 0.5) * 0.15;
-
-      const tempOsc = Math.sin(t * 0.15) * 0.6 + Math.cos(t * 0.05) * 0.3;
-      const currOsc = Math.sin(t * 0.6) * 0.3 + (Math.random() - 0.5) * 0.1;
-      const rpmOsc = Math.sin(t * 1.2) * 8 + (Math.random() - 0.5) * 4;
-
-      const v = Math.max(0.1, Number((baseMetrics.baseVib + vibOsc).toFixed(2)));
-      const temp = Math.max(10, Number((baseMetrics.baseTemp + tempOsc).toFixed(1)));
-      const curr = Math.max(0, Number((baseMetrics.baseCurr + currOsc).toFixed(1)));
-      const rpm = Math.max(0, Number((baseMetrics.baseRpm + rpmOsc).toFixed(0)));
-
-      points.push({
-        index: count - i + 1,
-        time: timeStr,
-        timestamp: timeObj.toISOString(),
-        temperature: temp,
-        vibration: v,
-        current: curr,
-        rpm,
-        source: 'REAL_HARDWARE / LIVE_OSCILLOSCOPE',
-      });
-    }
-
-    setWaveBuffer(points);
-    if (points.length > 0) {
-      const latest = points[points.length - 1];
-      setInstantaneous({
-        temperature: latest.temperature,
-        vibration: latest.vibration,
-        current: latest.current,
-        rpm: latest.rpm,
-        timestamp: latest.timestamp,
-      });
-    }
-  }, [baseMetrics, streamIntervalMs]);
-
-  // Reset or reinitialize when machine changes
+  // Periodic simulated packet logs in the terminal
   useEffect(() => {
-    initializeBuffer();
-  }, [selectedMachineId, initializeBuffer]);
+    if (activeWaveBuffer.length === 0) return;
+    const latest = activeWaveBuffer[activeWaveBuffer.length - 1];
+    const isCrit =
+      latest.status_temp === 'CRITICAL' ||
+      latest.status_vibration === 'CRITICAL' ||
+      latest.status_current === 'CRITICAL' ||
+      latest.status_rpm === 'CRITICAL';
+    const isWarn =
+      latest.status_temp === 'WARNING' ||
+      latest.status_vibration === 'WARNING' ||
+      latest.status_current === 'WARNING' ||
+      latest.status_rpm === 'WARNING';
 
-  // Continuous Dynamic Real-Time Waveform Clock & Tick Generation
-  useEffect(() => {
-    if (!isStreaming) return;
-
-    const ratedRpm = thresholds.ratedRpm || 1500;
-
-    const interval = setInterval(() => {
-      tickCounterRef.current += 1;
-      const t = tickCounterRef.current;
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-      // =========================================================================
-      // 2:00 MINUTE (120-SECOND) TIMELINE SIMULATION CYCLE ENGINE
-      // 0:00–0:50 NORMAL   | 0:50–1:00 WARNING | 1:00–1:10 CRITICAL | 1:10–2:00 RECOVERY
-      // =========================================================================
-      const cyclePeriodSec = 120; // 2 minutes repeat loop
-      const elapsedSeconds = (t * (streamIntervalMs / 1000));
-      const cycleSec = elapsedSeconds % cyclePeriodSec;
-
-      let nextTemp = 32.0;
-      let nextVib = 0.8;
-      let nextCurr = 1.1;
-      let nextRpm = 0.85 * ratedRpm;
-      let phaseLabel = '0:00–0:50 NORMAL';
-
-      if (simulationMode === 'harmonic') {
-        // Continuous harmonic resonance mode
-        const vibDelta = Math.sin(t * 0.8) * 1.4 + Math.sin(t * 2.4) * 0.6 + (Math.random() - 0.5) * 0.2;
-        const tempDelta = Math.sin(t * 0.1) * 8.0;
-        const currDelta = Math.sin(t * 0.8) * 0.6;
-        const rpmDelta = Math.sin(t * 1.5) * 20;
-
-        nextVib = Math.min(2.9, Math.max(0.2, 1.2 + vibDelta));
-        nextTemp = Math.min(58, Math.max(30, 42.0 + tempDelta));
-        nextCurr = Math.min(2.8, Math.max(0.5, 1.6 + currDelta));
-        nextRpm = Math.min(ratedRpm * 0.95, Math.max(ratedRpm * 0.55, 0.75 * ratedRpm + rpmDelta));
-        phaseLabel = 'HARMONIC RESONANCE';
-      } else if (simulationMode === 'bearing_fault') {
-        // High-impulse critical spikes
-        const isSpike = t % 5 === 0;
-        const vibDelta = (isSpike ? 2.5 : 0.4) * Math.sin(t * 1.5) + (Math.random() - 0.5) * 0.4;
-        const tempDelta = Math.sin(t * 0.1) * 12.0;
-        nextVib = Math.max(3.2, 3.1 + vibDelta);
-        nextTemp = Math.max(61.0, 58.0 + tempDelta);
-        nextCurr = Math.max(3.1, 2.8 + Math.sin(t * 0.5) * 0.6);
-        nextRpm = Math.min(ratedRpm * 0.48, 0.45 * ratedRpm + (Math.random() - 0.5) * 30);
-        phaseLabel = '1:00–1:10 CRITICAL SPIKES';
-      } else {
-        // DEFAULT 2-MINUTE AUTOMATIC CYCLE (Normal -> Warning -> Critical -> Recovery -> Repeat)
-        if (cycleSec < 50) {
-          // =========================================================================
-          // PHASE 1: 0:00–0:50  NORMAL (50 seconds)
-          // Small variations | All values remain normal
-          // Temp: 25–45 °C | Vib: 0–1.5 m/s² | Curr: 0.2–2.0 A | RPM: 70–100% rated
-          // =========================================================================
-          phaseLabel = '0:00–0:50 NORMAL';
-          const normProgress = cycleSec / 50; // 0.0 -> 1.0
-          const baseOsc = 31.0 + 3.5 * Math.sin(cycleSec * 0.18) + (Math.random() - 0.5) * 0.4;
-          const preWarm = normProgress > 0.7 ? ((normProgress - 0.7) / 0.3) * 10.0 : 0;
-          nextTemp = Math.min(44.8, Math.max(25.5, baseOsc + preWarm));
-
-          const vibBase = 0.65 + 0.35 * Math.sin(cycleSec * 0.35) + (Math.random() - 0.5) * 0.08;
-          const vibPreRise = normProgress > 0.7 ? ((normProgress - 0.7) / 0.3) * 0.45 : 0;
-          nextVib = Math.min(1.48, Math.max(0.15, vibBase + vibPreRise));
-
-          const currBase = 1.0 + 0.4 * Math.sin(cycleSec * 0.25) + (Math.random() - 0.5) * 0.06;
-          const currPreRise = normProgress > 0.7 ? ((normProgress - 0.7) / 0.3) * 0.50 : 0;
-          nextCurr = Math.min(1.95, Math.max(0.3, currBase + currPreRise));
-
-          const rpmFraction = 0.88 + 0.05 * Math.sin(cycleSec * 0.2) - (normProgress > 0.7 ? ((normProgress - 0.7) / 0.3) * 0.15 : 0);
-          nextRpm = Math.min(0.98, Math.max(0.72, rpmFraction)) * ratedRpm;
-
-        } else if (cycleSec < 60) {
-          // =========================================================================
-          // PHASE 2: 0:50–1:00  WARNING (10 seconds)
-          // Values smoothly & gradually enter warning region
-          // Temp: 45–60 °C | Vib: 1.5–3.0 m/s² | Curr: 2.0–3.0 A | RPM: 50–70% rated
-          // =========================================================================
-          phaseLabel = '0:50–1:00 WARNING';
-          const p = (cycleSec - 50) / 10; // 0.0 -> 1.0
-          nextTemp = 45.0 + (59.8 - 45.0) * p + 0.25 * Math.sin(p * Math.PI * 3) + (Math.random() - 0.5) * 0.2;
-          nextTemp = Math.min(59.85, Math.max(45.0, nextTemp));
-
-          nextVib = 1.50 + (2.98 - 1.50) * p + 0.04 * Math.sin(p * Math.PI * 3) + (Math.random() - 0.5) * 0.03;
-          nextVib = Math.min(2.98, Math.max(1.50, nextVib));
-
-          nextCurr = 2.00 + (2.98 - 2.00) * p + 0.03 * Math.sin(p * Math.PI * 3) + (Math.random() - 0.5) * 0.02;
-          nextCurr = Math.min(2.98, Math.max(2.00, nextCurr));
-
-          const rpmFraction = 0.70 - (0.70 - 0.52) * p + (Math.random() - 0.5) * 0.01;
-          nextRpm = Math.min(0.70, Math.max(0.52, rpmFraction)) * ratedRpm;
-
-        } else if (cycleSec < 70) {
-          // =========================================================================
-          // PHASE 3: 1:00–1:10  CRITICAL (10 seconds)
-          // Values remain beyond critical limits | Continuous dynamic critical fluctuation
-          // Temp: >60 °C | Vib: >3.0 m/s² | Curr: >3.0 A | RPM: <50% rated
-          // =========================================================================
-          phaseLabel = '1:00–1:10 CRITICAL';
-          const p = (cycleSec - 60) / 10; // 0.0 -> 1.0
-          nextTemp = 60.5 + 4.5 * Math.sin(p * Math.PI) + 0.4 * Math.sin(p * 12) + (Math.random() - 0.5) * 0.3;
-          nextTemp = Math.max(60.2, nextTemp);
-
-          nextVib = 3.05 + 0.65 * Math.sin(p * Math.PI) + 0.08 * Math.sin(p * 12) + (Math.random() - 0.5) * 0.04;
-          nextVib = Math.max(3.02, nextVib);
-
-          nextCurr = 3.05 + 0.45 * Math.sin(p * Math.PI) + 0.06 * Math.sin(p * 12) + (Math.random() - 0.5) * 0.03;
-          nextCurr = Math.max(3.02, nextCurr);
-
-          const rpmFraction = 0.46 - 0.10 * Math.sin(p * Math.PI) + (Math.random() - 0.5) * 0.01;
-          nextRpm = Math.min(0.48, Math.max(0.32, rpmFraction)) * ratedRpm;
-
-        } else {
-          // =========================================================================
-          // PHASE 4: 1:10–2:00  RECOVERY (50 seconds)
-          // Values gradually & smoothly cool down and return toward normal baseline
-          // =========================================================================
-          phaseLabel = '1:10–2:00 RECOVERY';
-          const p = (cycleSec - 70) / 50; // 0.0 -> 1.0
-          const decay = Math.pow(1 - p, 1.25);
-          nextTemp = 30.0 + (60.5 - 30.0) * decay + 0.35 * Math.sin(cycleSec * 0.25);
-          nextTemp = Math.max(25.0, nextTemp);
-
-          nextVib = 0.65 + (3.05 - 0.65) * Math.pow(1 - p, 1.3) + 0.04 * Math.sin(cycleSec * 0.4);
-          nextVib = Math.max(0.15, nextVib);
-
-          nextCurr = 1.00 + (3.05 - 1.00) * Math.pow(1 - p, 1.3) + 0.03 * Math.sin(cycleSec * 0.3);
-          nextCurr = Math.max(0.3, nextCurr);
-
-          const rpmFraction = 0.48 + (0.88 - 0.48) * (1 - Math.pow(1 - p, 1.3)) + (Math.random() - 0.5) * 0.01;
-          nextRpm = Math.max(0.46, Math.min(0.92, rpmFraction)) * ratedRpm;
-        }
-      }
-
-      nextTemp = Number(nextTemp.toFixed(1));
-      nextVib = Number(nextVib.toFixed(2));
-      nextCurr = Number(nextCurr.toFixed(2));
-      nextRpm = Number(nextRpm.toFixed(0));
-
-      const newPoint: LiveWavePoint = {
-        index: t,
-        time: timeStr,
-        timestamp: now.toISOString(),
-        temperature: nextTemp,
-        vibration: nextVib,
-        current: nextCurr,
-        rpm: nextRpm,
-        source: 'REAL_ESP32 / LIVE_INGESTION',
-      };
-
-      setInstantaneous({
-        temperature: nextTemp,
-        vibration: nextVib,
-        current: nextCurr,
-        rpm: nextRpm,
-        timestamp: now.toISOString(),
-      });
-
-      setWaveBuffer((prev) => {
-        const next = [...prev, newPoint];
-        if (next.length > sampleLimit) {
-          return next.slice(next.length - sampleLimit);
-        }
-        return next;
-      });
-
-      // Periodic packet logging in the console terminal
-      if (t % 2 === 0) {
-        const isCrit = nextTemp >= thresholds.tempCritical || nextVib >= thresholds.vibCritical;
-        const isWarn = nextTemp >= thresholds.tempWarning || nextVib >= thresholds.vibWarning;
-
-        setPacketLogs((prev) => [
-          {
-            id: `PKT-${Date.now()}-${t}`,
-            time: timeStr,
-            text: `[POSTGRESQL] ${selectedMachineId} -> Temp: ${nextTemp}°C, Vib: ${nextVib} m/s², Curr: ${nextCurr}A, RPM: ${nextRpm} (${phaseLabel})`,
-            source: 'ESP32 / TELEMETRY_STREAM',
-            status: isCrit ? 'CRITICAL' : isWarn ? 'WARNING' : 'OK',
-          },
-          ...prev.slice(0, 30),
-        ]);
-      }
-    }, streamIntervalMs);
-
-    return () => clearInterval(interval);
-  }, [isStreaming, streamIntervalMs, sampleLimit, simulationMode, thresholds, selectedMachineId]);
+    setPacketLogs((prev) => [
+      {
+        id: `PKT-${Date.now()}-${latest.index}`,
+        time: latest.time,
+        text: `[${isSimulationMode ? 'SIMULATION' : 'POSTGRESQL'}] ${activeMachineId} -> Temp: ${latest.temperature}°C, Vib: ${latest.vibration} m/s², Curr: ${latest.current}A, RPM: ${latest.rpm} (${activeConfig.simulation_mode.toUpperCase()})`,
+        source: isSimulationMode ? 'SIMULATED / DYNAMIC_CONFIG' : 'ESP32_HARDWARE',
+        status: isCrit ? 'CRITICAL' : isWarn ? 'WARNING' : 'OK',
+      },
+      ...prev.slice(0, 25),
+    ]);
+  }, [activeWaveBuffer, activeMachineId, activeConfig.simulation_mode, isSimulationMode]);
 
   // Compute live waveform analysis metrics from the active rolling buffer
   const analysisMetrics = useMemo(() => {
-    if (waveBuffer.length === 0) {
+    if (activeWaveBuffer.length === 0) {
       return {
         vibrationRms: instantaneous.vibration,
         vibrationPeak: instantaneous.vibration,
@@ -391,8 +140,8 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
       };
     }
 
-    const vibs = waveBuffer.map((p) => p.vibration);
-    const temps = waveBuffer.map((p) => p.temperature);
+    const vibs = activeWaveBuffer.map((p) => p.vibration);
+    const temps = activeWaveBuffer.map((p) => p.temperature);
 
     const vibMax = Math.max(...vibs);
     const vibMin = Math.min(...vibs);
@@ -403,20 +152,20 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
     const tempAvg = temps.reduce((acc, t) => acc + t, 0) / temps.length;
     const tempTrend = temps.length >= 2 ? temps[temps.length - 1] - temps[0] : 0;
 
-    // ISO 10816-3 Vibration Severity Classification
+    // ISO 10816-3 Vibration Severity Classification based on configured thresholds
     let isoZone = 'Zone A (Excellent / Nominal)';
     let isoColor = 'text-emerald-400';
     let isoBg = 'bg-emerald-500/10 border-emerald-500/30';
 
-    if (vibMax >= thresholds.vibCritical || vibRms >= thresholds.vibCritical) {
+    if (vibMax >= activeConfig.vib_critical || vibRms >= activeConfig.vib_critical) {
       isoZone = 'Zone D (Critical Danger / Shutdown)';
       isoColor = 'text-rose-400';
       isoBg = 'bg-rose-500/20 border-rose-500/40';
-    } else if (vibMax >= thresholds.vibWarning || vibRms >= thresholds.vibWarning) {
+    } else if (vibMax >= activeConfig.vib_warning || vibRms >= activeConfig.vib_warning) {
       isoZone = 'Zone C (Warning / Alarm Threshold)';
       isoColor = 'text-amber-400';
       isoBg = 'bg-amber-500/20 border-amber-500/40';
-    } else if (vibRms >= 2.8) {
+    } else if (vibRms >= activeConfig.vib_warning * 0.7) {
       isoZone = 'Zone B (Acceptable Continuous Operation)';
       isoColor = 'text-cyan-400';
       isoBg = 'bg-cyan-500/10 border-cyan-500/30';
@@ -433,28 +182,33 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
       isoColor,
       isoBg,
     };
-  }, [waveBuffer, instantaneous, thresholds]);
+  }, [activeWaveBuffer, instantaneous, activeConfig]);
 
-  // Overall dynamic status
+  // Overall system dynamic status
   const isCurrentlyCritical =
-    instantaneous.temperature >= thresholds.tempCritical ||
-    instantaneous.vibration >= thresholds.vibCritical;
+    instantaneous.status_temp === 'CRITICAL' ||
+    instantaneous.status_vibration === 'CRITICAL' ||
+    instantaneous.status_current === 'CRITICAL' ||
+    instantaneous.status_rpm === 'CRITICAL';
+
   const isCurrentlyWarning =
-    instantaneous.temperature >= thresholds.tempWarning ||
-    instantaneous.vibration >= thresholds.vibWarning;
+    instantaneous.status_temp === 'WARNING' ||
+    instantaneous.status_vibration === 'WARNING' ||
+    instantaneous.status_current === 'WARNING' ||
+    instantaneous.status_rpm === 'WARNING';
 
   const currentStatus = isCurrentlyCritical ? 'CRITICAL' : isCurrentlyWarning ? 'WARNING' : 'NORMAL';
 
   return (
-    <div id="live-monitoring-page" className="space-y-6">
+    <div id="live-monitoring-page" className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* ========================================================================= */}
       {/* 1. TOP CONTROLLER & STREAMING DASHBOARD BAR */}
       {/* ========================================================================= */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-2xl backdrop-blur-md">
         <div className="flex items-center gap-3.5">
           <div className="relative flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 shadow-inner">
-            <Activity className={`h-6 w-6 ${isStreaming ? 'animate-pulse' : ''}`} />
-            {isStreaming && (
+            <Activity className={`h-6 w-6 ${isSimulationMode && !isPaused ? 'animate-pulse' : ''}`} />
+            {isSimulationMode && !isPaused && (
               <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-cyan-500"></span>
@@ -464,10 +218,14 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-bold text-white tracking-tight">Real-Time Telemetry & Oscilloscope</h2>
-              <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                <Database className="h-3 w-3" />
-                POSTGRESQL SYNC
+              
+              {/* Simulation Mode Badge */}
+              <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+                <Sparkles className="h-3 w-3" />
+                {isSimulationMode ? 'SIMULATION MODE (DYNAMIC CONFIG)' : 'REAL ESP32 HARDWARE'}
               </span>
+
+              {/* Overall Status Badge */}
               <span
                 className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold border ${
                   currentStatus === 'CRITICAL'
@@ -477,16 +235,35 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                     : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
                 }`}
               >
-                {currentStatus === 'CRITICAL' ? <AlertOctagon className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                {currentStatus === 'CRITICAL' ? (
+                  <AlertOctagon className="h-3 w-3" />
+                ) : currentStatus === 'WARNING' ? (
+                  <AlertTriangle className="h-3 w-3" />
+                ) : (
+                  <CheckCircle2 className="h-3 w-3" />
+                )}
                 {currentStatus}
               </span>
+
+              {/* Motor Power Status Badge */}
+              <span
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold border ${
+                  instantaneous.motor_powered
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                    : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                }`}
+              >
+                <Power className="h-3 w-3" />
+                {instantaneous.motor_powered ? 'MOTOR ENERGIZED' : 'MOTOR STOPPED / DE-ENERGIZED'}
+              </span>
             </div>
+
             <p className="text-xs text-slate-400 mt-1 flex items-center gap-2">
-              <span>Streaming: <strong className="text-cyan-400 font-mono">{streamIntervalMs / 1000}s</strong> interval</span>
+              <span>Asset: <strong className="text-white font-mono">{activeMachine ? `${activeMachine.machine_id} (${activeMachine.name})` : activeMachineId}</strong></span>
               <span>•</span>
-              <span>Buffer: <strong className="text-white font-mono">{waveBuffer.length} / {sampleLimit} pts</strong></span>
+              <span>Tick Interval: <strong className="text-cyan-400 font-mono">{activeConfig.update_interval_ms}ms</strong></span>
               <span>•</span>
-              <span>Wave Status: <strong className="text-emerald-400 font-mono">Dynamic Wave Flowing</strong></span>
+              <span>Buffer: <strong className="text-white font-mono">{activeWaveBuffer.length} pts</strong></span>
             </p>
           </div>
         </div>
@@ -497,8 +274,11 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
           <div className="flex items-center gap-1.5 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
             <Radio className="h-3.5 w-3.5 text-cyan-400" />
             <select
-              value={selectedMachineId}
-              onChange={(e) => setSelectedMachineId(e.target.value)}
+              value={activeMachineId}
+              onChange={(e) => {
+                setActiveMachineId(e.target.value);
+                onSelectMachine(e.target.value);
+              }}
               className="bg-transparent text-xs font-semibold text-white focus:outline-none cursor-pointer pr-2"
             >
               {machines.map((m) => (
@@ -509,105 +289,268 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
             </select>
           </div>
 
-          {/* Pause / Resume Button */}
+          {/* Motor Power Quick Switch */}
           <button
-            onClick={() => setIsStreaming(!isStreaming)}
-            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-sm ${
-              isStreaming
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+            onClick={toggleMotorPower}
+            className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all border ${
+              instantaneous.motor_powered
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
             }`}
+            title="Toggle Motor Main Power Contactor"
           >
-            {isStreaming ? (
-              <>
-                <Pause className="h-3.5 w-3.5 fill-current" />
-                <span>Pause Wave</span>
-              </>
-            ) : (
-              <>
-                <Play className="h-3.5 w-3.5 fill-current" />
-                <span>Resume Wave</span>
-              </>
-            )}
+            <Power className="h-3.5 w-3.5" />
+            <span>{instantaneous.motor_powered ? 'Motor ON' : 'Motor OFF'}</span>
           </button>
 
-          {/* Polling Speed Selector */}
-          <div className="flex rounded-xl border border-slate-800 bg-slate-950 p-1 text-xs">
-            {[500, 1000, 2000].map((ms) => (
-              <button
-                key={ms}
-                onClick={() => setStreamIntervalMs(ms)}
-                className={`rounded-lg px-2.5 py-1 font-mono text-[11px] font-semibold transition-all ${
-                  streamIntervalMs === ms
-                    ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                {ms >= 1000 ? `${ms / 1000}s` : `${ms}ms`}
-              </button>
-            ))}
-          </div>
+          {/* Simulation Mode Toggle Button */}
+          <button
+            onClick={() => setIsSimulationMode(!isSimulationMode)}
+            className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all border ${
+              isSimulationMode
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+            }`}
+          >
+            <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+            <span>{isSimulationMode ? 'Simulation Active' : 'ESP32 Hardware'}</span>
+          </button>
 
           {/* Manual Input Trigger */}
           <button
-            onClick={() => onOpenManualModal(selectedMachineId)}
-            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-3.5 py-2 text-xs font-bold text-slate-950 hover:brightness-110 transition-all shadow-md"
+            onClick={() => onOpenManualModal(activeMachineId)}
+            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:brightness-110 transition-all shadow-md shadow-cyan-500/20"
           >
-            <span>+ Manual Real Input</span>
+            <span>+ Inject Sensor Data</span>
           </button>
         </div>
       </div>
 
       {/* ========================================================================= */}
-      {/* 2. DYNAMIC LIVE OSCILLOSCOPE & MULTI-CHANNEL WAVE ANALYZER */}
+      {/* 2. DYNAMIC LIVE SENSOR TELEMETRY CARDS (IMAGE MATCHING STYLE) */}
+      {/* ========================================================================= */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* CARD 1: TEMPERATURE */}
+        <div className="rounded-2xl border border-amber-500/20 bg-slate-900/90 p-4 shadow-xl backdrop-blur-md space-y-2 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase font-bold tracking-wider text-amber-400 flex items-center gap-1.5">
+              <Flame className="h-4 w-4" /> TEMPERATURE
+            </div>
+            {/* Dynamic Status Badge */}
+            <span
+              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold border ${
+                instantaneous.status_temp === 'CRITICAL'
+                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 animate-pulse'
+                  : instantaneous.status_temp === 'WARNING'
+                  ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                  : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+              }`}
+            >
+              {instantaneous.status_temp === 'CRITICAL' ? (
+                <>✖ CRITICAL</>
+              ) : instantaneous.status_temp === 'WARNING' ? (
+                <>⚠ WARNING</>
+              ) : (
+                <>✓ NORMAL</>
+              )}
+            </span>
+          </div>
+
+          <div>
+            <div className="text-3xl font-black font-mono text-amber-300 tracking-tight">
+              {fmt(instantaneous.temperature)}°C
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              Limit: {activeConfig.temp_warning.toFixed(1)}° / {activeConfig.temp_critical.toFixed(1)}°C
+            </div>
+          </div>
+
+          <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800/80 flex justify-between">
+            <span>Range: {activeConfig.temp_min}° – {activeConfig.temp_max}°C</span>
+            <span>Target: {activeConfig.temp_target}°C</span>
+          </div>
+        </div>
+
+        {/* CARD 2: VIBRATION */}
+        <div className="rounded-2xl border border-rose-500/20 bg-slate-900/90 p-4 shadow-xl backdrop-blur-md space-y-2 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase font-bold tracking-wider text-rose-400 flex items-center gap-1.5">
+              <Activity className="h-4 w-4" /> VIBRATION
+            </div>
+            {/* Dynamic Status Badge */}
+            <span
+              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold border ${
+                instantaneous.status_vibration === 'CRITICAL'
+                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 animate-pulse'
+                  : instantaneous.status_vibration === 'WARNING'
+                  ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                  : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+              }`}
+            >
+              {instantaneous.status_vibration === 'CRITICAL' ? (
+                <>✖ CRITICAL</>
+              ) : instantaneous.status_vibration === 'WARNING' ? (
+                <>⚠ WARNING</>
+              ) : (
+                <>✓ NORMAL</>
+              )}
+            </span>
+          </div>
+
+          <div>
+            <div className="text-3xl font-black font-mono text-rose-300 tracking-tight">
+              {fmt(instantaneous.vibration, 2)} m/s²
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              Limit: {activeConfig.vib_warning.toFixed(2)} / {activeConfig.vib_critical.toFixed(2)} m/s²
+            </div>
+          </div>
+
+          <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800/80 flex justify-between">
+            <span>Range: {activeConfig.vib_min} – {activeConfig.vib_max} m/s²</span>
+            <span>Target: {activeConfig.vib_target} m/s²</span>
+          </div>
+        </div>
+
+        {/* CARD 3: MOTOR CURRENT */}
+        <div className="rounded-2xl border border-cyan-500/20 bg-slate-900/90 p-4 shadow-xl backdrop-blur-md space-y-2 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase font-bold tracking-wider text-cyan-400 flex items-center gap-1.5">
+              <Zap className="h-4 w-4" /> MOTOR CURRENT
+            </div>
+            {/* Dynamic Status Badge */}
+            <span
+              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold border ${
+                instantaneous.status_current === 'CRITICAL'
+                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 animate-pulse'
+                  : instantaneous.status_current === 'WARNING'
+                  ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                  : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+              }`}
+            >
+              {instantaneous.status_current === 'CRITICAL' ? (
+                <>✖ CRITICAL</>
+              ) : instantaneous.status_current === 'WARNING' ? (
+                <>⚠ WARNING</>
+              ) : (
+                <>✓ NORMAL</>
+              )}
+            </span>
+          </div>
+
+          <div>
+            <div className="text-3xl font-black font-mono text-cyan-300 tracking-tight">
+              {fmt(instantaneous.current, 2)} A
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              Limit: {activeConfig.current_warning.toFixed(1)} / {activeConfig.current_critical.toFixed(1)} A
+            </div>
+          </div>
+
+          <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800/80 flex justify-between">
+            <span>Safety Max: {activeConfig.current_max} A</span>
+            <span>Target: {activeConfig.current_target} A</span>
+          </div>
+        </div>
+
+        {/* CARD 4: SHAFT VELOCITY (RPM) */}
+        <div className="rounded-2xl border border-purple-500/20 bg-slate-900/90 p-4 shadow-xl backdrop-blur-md space-y-2 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase font-bold tracking-wider text-purple-400 flex items-center gap-1.5">
+              <Gauge className="h-4 w-4" /> SHAFT VELOCITY
+            </div>
+            {/* Dynamic Status Badge */}
+            <span
+              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold border ${
+                instantaneous.status_rpm === 'CRITICAL'
+                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 animate-pulse'
+                  : instantaneous.status_rpm === 'WARNING'
+                  ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                  : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+              }`}
+            >
+              {instantaneous.status_rpm === 'CRITICAL' ? (
+                <>✖ STALL / CRIT</>
+              ) : instantaneous.status_rpm === 'WARNING' ? (
+                <>⚠ LOW SPEED</>
+              ) : (
+                <>✓ NORMAL</>
+              )}
+            </span>
+          </div>
+
+          <div>
+            <div className="text-3xl font-black font-mono text-purple-300 tracking-tight">
+              {fmt(instantaneous.rpm, 0)} RPM
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              Rated: {activeConfig.rpm_rated || 1500} RPM
+            </div>
+          </div>
+
+          <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800/80 flex justify-between">
+            <span>Target: {activeConfig.rpm_target} RPM</span>
+            <span>Step: {activeConfig.rpm_step} RPM/tick</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 3. DYNAMIC TIME-SERIES GRAPHS WITH CONFIGURABLE TIME WINDOWS */}
       {/* ========================================================================= */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-2xl space-y-4">
-        {/* Header with Channel Selectors */}
+        {/* Header with Channel Selectors and Time Windows */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
           <div className="flex items-center gap-2.5">
-            <Signal className="h-5 w-5 text-cyan-400 animate-pulse" />
+            <Signal className="h-5 w-5 text-cyan-400" />
             <div>
               <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                <span>{activeMachine ? `${activeMachine.machine_id}: ${activeMachine.name}` : selectedMachineId} — Real-Time Wave Oscilloscope</span>
+                <span>Dynamic Real-Time Waveform Graph</span>
                 <span className="flex h-2 w-2 relative">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                Live streaming multi-sine harmonic wave with dynamic peak-to-peak frequency analysis.
+                Driven by real-time simulation engine time-series data reflecting configured ranges and thresholds.
               </p>
             </div>
           </div>
 
-          {/* Channel Filters & Window Length Controls */}
-          <div className="flex flex-wrap items-center gap-1.5">
+          {/* Time Window Buttons & Channel Filters */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Time Window Selector (1m / 5m / 10m) */}
+            <div className="flex rounded-xl border border-slate-800 bg-slate-950 p-1 text-xs">
+              {(['1m', '5m', '10m'] as TimeWindow[]).map((w) => (
+                <button
+                  key={w}
+                  onClick={() => setTimeWindow(w)}
+                  className={`rounded-lg px-2.5 py-1 font-mono text-[11px] font-bold transition-all ${
+                    timeWindow === w
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {w === '1m' ? '1 Min' : w === '5m' ? '5 Min' : '10 Min'}
+                </button>
+              ))}
+            </div>
+
             {/* Channel Filters */}
             <div className="flex rounded-xl border border-slate-800 bg-slate-950 p-1 text-xs">
               <button
                 onClick={() => setActiveChannel('all')}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold transition-all ${
+                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-all ${
                   activeChannel === 'all'
                     ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                All Channels
-              </button>
-              <button
-                onClick={() => setActiveChannel('vibration')}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold transition-all flex items-center gap-1 ${
-                  activeChannel === 'vibration'
-                    ? 'bg-rose-500/20 text-rose-300 font-bold border border-rose-500/40'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Activity className="h-3 w-3 text-rose-400" />
-                Vibration
+                All
               </button>
               <button
                 onClick={() => setActiveChannel('temperature')}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold transition-all flex items-center gap-1 ${
+                className={`rounded-lg px-2 py-1 text-xs font-semibold transition-all flex items-center gap-1 ${
                   activeChannel === 'temperature'
                     ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40'
                     : 'text-slate-400 hover:text-white'
@@ -617,19 +560,30 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                 Temp
               </button>
               <button
+                onClick={() => setActiveChannel('vibration')}
+                className={`rounded-lg px-2 py-1 text-xs font-semibold transition-all flex items-center gap-1 ${
+                  activeChannel === 'vibration'
+                    ? 'bg-rose-500/20 text-rose-300 font-bold border border-rose-500/40'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Activity className="h-3 w-3 text-rose-400" />
+                Vib
+              </button>
+              <button
                 onClick={() => setActiveChannel('current')}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold transition-all flex items-center gap-1 ${
+                className={`rounded-lg px-2 py-1 text-xs font-semibold transition-all flex items-center gap-1 ${
                   activeChannel === 'current'
                     ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <Zap className="h-3 w-3 text-cyan-400" />
-                Current
+                Curr
               </button>
               <button
                 onClick={() => setActiveChannel('rpm')}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold transition-all flex items-center gap-1 ${
+                className={`rounded-lg px-2 py-1 text-xs font-semibold transition-all flex items-center gap-1 ${
                   activeChannel === 'rpm'
                     ? 'bg-purple-500/20 text-purple-300 font-bold border border-purple-500/40'
                     : 'text-slate-400 hover:text-white'
@@ -640,172 +594,32 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
               </button>
             </div>
 
-            {/* Window length selector */}
-            <div className="flex rounded-xl border border-slate-800 bg-slate-950 p-1 text-xs">
-              {[20, 30, 50].map((lim) => (
-                <button
-                  key={lim}
-                  onClick={() => setSampleLimit(lim)}
-                  className={`rounded-lg px-2.5 py-1 font-mono text-[11px] font-semibold transition-all ${
-                    sampleLimit === lim
-                      ? 'bg-slate-800 text-white font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {lim}pts
-                </button>
-              ))}
-            </div>
-
-            {/* Area vs Line Toggle */}
+            {/* Line / Area Toggle */}
             <button
               onClick={() => setChartType(chartType === 'area' ? 'line' : 'area')}
               className="rounded-xl border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white transition-all flex items-center gap-1"
-              title="Toggle Chart Rendering Mode"
             >
               <BarChart2 className="h-3.5 w-3.5 text-cyan-400" />
               <span className="capitalize">{chartType}</span>
             </button>
 
-            {/* Reset Wave Buffer */}
+            {/* Clear History */}
             <button
-              onClick={initializeBuffer}
+              onClick={clearHistory}
               className="rounded-xl border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-400 hover:text-white transition-all flex items-center gap-1"
-              title="Reset Wave Buffer"
+              title="Clear Graph History"
             >
               <RotateCcw className="h-3.5 w-3.5" />
+              <span>Clear</span>
             </button>
           </div>
         </div>
 
-        {/* Live Dynamic Instantaneous KPI Readouts */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {/* Temperature */}
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 flex items-center justify-between transition-all">
-            <div className="space-y-0.5">
-              <div className="text-[10px] uppercase font-bold tracking-wider text-amber-400/80 flex items-center gap-1">
-                <Flame className="h-3 w-3" /> Temperature
-              </div>
-              <div className="text-2xl font-mono font-bold text-amber-300">
-                {fmt(instantaneous.temperature)}°C
-              </div>
-              <div className="text-[10px] text-slate-400">
-                Limit: {thresholds.tempWarning.toFixed(1)}° / {thresholds.tempCritical.toFixed(1)}°C
-              </div>
-            </div>
-            <div className="text-right font-mono text-[10px]">
-              {instantaneous.temperature >= thresholds.tempCritical ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/20 px-2 py-0.5 text-rose-400 font-bold border border-rose-500/40 animate-pulse">
-                  🔥 CRITICAL
-                </span>
-              ) : instantaneous.temperature >= thresholds.tempWarning ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-0.5 text-amber-400 font-bold border border-amber-500/40">
-                  ⚠️ WARNING
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-400 font-bold border border-emerald-500/40">
-                  ✅ NORMAL
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Vibration */}
-          <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 flex items-center justify-between transition-all">
-            <div className="space-y-0.5">
-              <div className="text-[10px] uppercase font-bold tracking-wider text-rose-400/80 flex items-center gap-1">
-                <Activity className="h-3 w-3" /> Vibration
-              </div>
-              <div className="text-2xl font-mono font-bold text-rose-300">
-                {fmt(instantaneous.vibration, 2)} m/s²
-              </div>
-              <div className="text-[10px] text-slate-400">
-                Limit: {thresholds.vibWarning.toFixed(2)} / {thresholds.vibCritical.toFixed(2)} m/s²
-              </div>
-            </div>
-            <div className="text-right font-mono text-[10px]">
-              {instantaneous.vibration >= thresholds.vibCritical ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/20 px-2 py-0.5 text-rose-400 font-bold border border-rose-500/40 animate-pulse">
-                  🚨 CRITICAL
-                </span>
-              ) : instantaneous.vibration >= thresholds.vibWarning ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-0.5 text-amber-400 font-bold border border-amber-500/40">
-                  ⚠️ WARNING
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-400 font-bold border border-emerald-500/40">
-                  ✅ NORMAL
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Current */}
-          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 flex items-center justify-between transition-all">
-            <div className="space-y-0.5">
-              <div className="text-[10px] uppercase font-bold tracking-wider text-cyan-400/80 flex items-center gap-1">
-                <Zap className="h-3 w-3" /> Motor Current
-              </div>
-              <div className="text-2xl font-mono font-bold text-cyan-300">
-                {fmt(instantaneous.current)} A
-              </div>
-              <div className="text-[10px] text-slate-400">
-                Limit: {(thresholds.currentWarning || 2.0).toFixed(1)} / {(thresholds.currentCritical || 3.0).toFixed(1)} A
-              </div>
-            </div>
-            <div className="text-right font-mono text-[10px]">
-              {instantaneous.current >= (thresholds.currentCritical || 3.0) ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/20 px-2 py-0.5 text-rose-400 font-bold border border-rose-500/40 animate-pulse">
-                  🚨 CRITICAL
-                </span>
-              ) : instantaneous.current >= (thresholds.currentWarning || 2.0) ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-0.5 text-amber-400 font-bold border border-amber-500/40">
-                  ⚠️ WARNING
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-400 font-bold border border-emerald-500/40">
-                  ✅ NORMAL
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Rotational Speed */}
-          <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-3 flex items-center justify-between transition-all">
-            <div className="space-y-0.5">
-              <div className="text-[10px] uppercase font-bold tracking-wider text-purple-400/80 flex items-center gap-1">
-                <Gauge className="h-3 w-3" /> Shaft Velocity
-              </div>
-              <div className="text-2xl font-mono font-bold text-purple-300">
-                {fmt(instantaneous.rpm, 0)} RPM
-              </div>
-              <div className="text-[10px] text-slate-400">
-                Rated: {thresholds.ratedRpm || 1500} RPM
-              </div>
-            </div>
-            <div className="text-right font-mono text-[10px]">
-              {instantaneous.rpm < (thresholds.ratedRpm || 1500) * 0.5 ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/20 px-2 py-0.5 text-rose-400 font-bold border border-rose-500/40 animate-pulse">
-                  🚨 CRITICAL
-                </span>
-              ) : instantaneous.rpm < (thresholds.ratedRpm || 1500) * 0.7 ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-0.5 text-amber-400 font-bold border border-amber-500/40">
-                  ⚠️ WARNING
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-400 font-bold border border-emerald-500/40">
-                  ✅ NORMAL
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Live Flowing Waveform Canvas */}
+        {/* Live Flowing Waveform Graph Canvas */}
         <div className="h-80 w-full rounded-xl bg-slate-950/80 p-3 border border-slate-800/80 relative">
           <ResponsiveContainer width="100%" height={290}>
             {chartType === 'area' ? (
-              <AreaChart data={waveBuffer} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+              <AreaChart data={activeWaveBuffer} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="vibGradLive" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.45} />
@@ -828,9 +642,28 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                 <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} />
                 
                 {/* Left Y Axis for Vibration (m/s²) & Current (A) */}
-                <YAxis yAxisId="left" stroke="#64748b" fontSize={11} tickLine={false} domain={[0, 6]} unit=" m/s²" />
-                {/* Right Y Axis for Temperature (°C) */}
-                <YAxis yAxisId="right" orientation="right" stroke="#f59e0b" fontSize={11} tickLine={false} unit="°C" domain={[20, 80]} />
+                <YAxis
+                  yAxisId="left"
+                  stroke="#64748b"
+                  fontSize={11}
+                  tickLine={false}
+                  domain={[0, (dataMax: number) => Math.max(dataMax * 1.2, 5.0)]}
+                  unit=" m/s²"
+                />
+                
+                {/* Right Y Axis for Temperature (°C) and RPM */}
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  stroke="#f59e0b"
+                  fontSize={11}
+                  tickLine={false}
+                  domain={[
+                    (dataMin: number) => Math.max(0, Math.floor(dataMin * 0.8)),
+                    (dataMax: number) => Math.ceil(dataMax * 1.15)
+                  ]}
+                  unit="°C"
+                />
 
                 <Tooltip
                   contentStyle={{
@@ -842,22 +675,22 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                   }}
                 />
 
-                {/* Reference Critical & Warning Threshold Lines */}
+                {/* Reference Threshold Lines */}
                 {(activeChannel === 'all' || activeChannel === 'vibration') && (
                   <>
                     <ReferenceLine
                       yAxisId="left"
-                      y={thresholds.vibWarning}
+                      y={activeConfig.vib_warning}
                       stroke="#eab308"
                       strokeDasharray="3 3"
-                      label={{ value: `Warn Vib (${thresholds.vibWarning} m/s²)`, fill: '#eab308', fontSize: 10 }}
+                      label={{ value: `Warn Vib (${activeConfig.vib_warning} m/s²)`, fill: '#eab308', fontSize: 10 }}
                     />
                     <ReferenceLine
                       yAxisId="left"
-                      y={thresholds.vibCritical}
+                      y={activeConfig.vib_critical}
                       stroke="#ef4444"
                       strokeDasharray="4 4"
-                      label={{ value: `Crit Vib (${thresholds.vibCritical} m/s²)`, fill: '#ef4444', fontSize: 10 }}
+                      label={{ value: `Crit Vib (${activeConfig.vib_critical} m/s²)`, fill: '#ef4444', fontSize: 10 }}
                     />
                   </>
                 )}
@@ -865,17 +698,17 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                   <>
                     <ReferenceLine
                       yAxisId="right"
-                      y={thresholds.tempWarning}
+                      y={activeConfig.temp_warning}
                       stroke="#f59e0b"
                       strokeDasharray="3 3"
-                      label={{ value: `Warn Temp (${thresholds.tempWarning}°C)`, fill: '#f59e0b', fontSize: 10 }}
+                      label={{ value: `Warn Temp (${activeConfig.temp_warning}°C)`, fill: '#f59e0b', fontSize: 10 }}
                     />
                     <ReferenceLine
                       yAxisId="right"
-                      y={thresholds.tempCritical}
+                      y={activeConfig.temp_critical}
                       stroke="#f97316"
                       strokeDasharray="4 4"
-                      label={{ value: `Crit Temp (${thresholds.tempCritical}°C)`, fill: '#f97316', fontSize: 10 }}
+                      label={{ value: `Crit Temp (${activeConfig.temp_critical}°C)`, fill: '#f97316', fontSize: 10 }}
                     />
                   </>
                 )}
@@ -905,7 +738,7 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                     stroke="#f59e0b"
                     strokeWidth={2.5}
                     fill="url(#tempGradLive)"
-                    dot={false}
+                    dot={{ r: 2.5, fill: '#f59e0b' }}
                     isAnimationActive={false}
                   />
                 )}
@@ -918,9 +751,9 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                     dataKey="current"
                     name="Current (A)"
                     stroke="#06b6d4"
-                    strokeWidth={1.5}
+                    strokeWidth={2}
                     fill="url(#currGradLive)"
-                    dot={false}
+                    dot={{ r: 2, fill: '#06b6d4' }}
                     isAnimationActive={false}
                   />
                 )}
@@ -928,249 +761,108 @@ export const LiveMonitoringPage: React.FC<LiveMonitoringPageProps> = ({
                 {/* RPM Wave */}
                 {activeChannel === 'rpm' && (
                   <Area
-                    yAxisId="left"
+                    yAxisId="right"
                     type="monotone"
                     dataKey="rpm"
-                    name="RPM"
+                    name="RPM (Speed)"
                     stroke="#a855f7"
-                    strokeWidth={2}
+                    strokeWidth={2.5}
                     fill="url(#rpmGradLive)"
-                    dot={false}
+                    dot={{ r: 2, fill: '#a855f7' }}
                     isAnimationActive={false}
                   />
                 )}
               </AreaChart>
             ) : (
-              <LineChart data={waveBuffer} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+              <LineChart data={activeWaveBuffer} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                 <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} />
-                <YAxis yAxisId="left" stroke="#64748b" fontSize={11} tickLine={false} domain={[0, 'auto']} />
-                <YAxis yAxisId="right" orientation="right" stroke="#f59e0b" fontSize={11} tickLine={false} unit="°C" domain={[0, 100]} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    borderColor: '#334155',
-                    borderRadius: '12px',
-                    fontSize: '12px',
-                  }}
-                />
+                <YAxis yAxisId="left" stroke="#64748b" fontSize={11} tickLine={false} domain={[0, 6]} unit=" m/s²" />
+                <YAxis yAxisId="right" orientation="right" stroke="#f59e0b" fontSize={11} tickLine={false} unit="°C" />
+                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }} />
+
                 {(activeChannel === 'all' || activeChannel === 'vibration') && (
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="vibration"
-                    name="Vibration (mm/s)"
-                    stroke="#f43f5e"
-                    strokeWidth={2.5}
-                    dot={{ r: 2.5, fill: '#f43f5e' }}
-                    isAnimationActive={false}
-                  />
+                  <Line yAxisId="left" type="monotone" dataKey="vibration" stroke="#f43f5e" strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 )}
                 {(activeChannel === 'all' || activeChannel === 'temperature') && (
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="temperature"
-                    name="Temperature (°C)"
-                    stroke="#f59e0b"
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
+                  <Line yAxisId="right" type="monotone" dataKey="temperature" stroke="#f59e0b" strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 )}
                 {(activeChannel === 'all' || activeChannel === 'current') && (
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="current"
-                    name="Current (A)"
-                    stroke="#06b6d4"
-                    strokeWidth={1.5}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
+                  <Line yAxisId="left" type="monotone" dataKey="current" stroke="#06b6d4" strokeWidth={2} dot={false} isAnimationActive={false} />
                 )}
                 {activeChannel === 'rpm' && (
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="rpm"
-                    name="RPM"
-                    stroke="#a855f7"
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
+                  <Line yAxisId="right" type="monotone" dataKey="rpm" stroke="#a855f7" strokeWidth={2} dot={false} isAnimationActive={false} />
                 )}
               </LineChart>
             )}
           </ResponsiveContainer>
         </div>
-
-        {/* Waveform Signal Diagnostics Summary Bar */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1 border-t border-slate-800/80">
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold">ISO 10816-3 Assessment</div>
-            <div className={`text-xs font-bold mt-1 ${analysisMetrics.isoColor}`}>
-              {analysisMetrics.isoZone}
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">Continuous RMS monitoring</div>
-          </div>
-
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold">Crest Factor (Cf)</div>
-            <div className="text-xs font-bold text-white font-mono mt-1">
-              {analysisMetrics.crestFactor.toFixed(2)}
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              {analysisMetrics.crestFactor > 3.5 ? '⚠️ High peak impulse' : '✅ Nominal harmonic wave'}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold">Vibration Peak (Vpk)</div>
-            <div className="text-xs font-bold text-rose-300 font-mono mt-1">
-              {analysisMetrics.vibrationPeak.toFixed(2)} mm/s
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">Min: {analysisMetrics.vibrationMin.toFixed(2)} mm/s</div>
-          </div>
-
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold">Thermal Gradient (ΔT)</div>
-            <div className="text-xs font-bold text-amber-300 font-mono mt-1">
-              {analysisMetrics.tempTrend >= 0 ? '+' : ''}
-              {analysisMetrics.tempTrend.toFixed(2)}°C / window
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">Window avg: {analysisMetrics.tempAvg.toFixed(1)}°C</div>
-          </div>
-        </div>
       </div>
 
       {/* ========================================================================= */}
-      {/* 3. EQUIPMENT FLEET REAL READOUTS GRID */}
+      {/* 4. ISO 10816 SPECTRUM & TERMINAL PACKET STREAM */}
       {/* ========================================================================= */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <Layers className="h-4 w-4 text-cyan-400" />
-            Equipment Fleet Real Readouts
-          </h3>
-          <span className="text-xs text-slate-500">Click any asset to switch telemetry focus</span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {machines.map((m) => {
-            const isTarget = m.machine_id === selectedMachineId;
-            const r = isTarget ? instantaneous : m.latest_reading;
-            const temp = r ? (typeof r.temperature === 'number' ? r.temperature : null) : null;
-            const vib = r ? (typeof r.vibration === 'number' ? r.vibration : null) : null;
-            const curr = r ? (typeof r.current === 'number' ? r.current : null) : null;
-            const rpm = r ? (typeof r.rpm === 'number' ? r.rpm : null) : null;
-
-            return (
-              <div
-                key={m.machine_id}
-                onClick={() => setSelectedMachineId(m.machine_id)}
-                className={`rounded-2xl border p-4 transition-all cursor-pointer ${
-                  isTarget
-                    ? 'border-cyan-500/60 bg-slate-900 shadow-lg shadow-cyan-500/10 ring-1 ring-cyan-500/30'
-                    : 'border-slate-800 bg-slate-950/80 hover:border-slate-700 hover:bg-slate-900/60'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
-                      {m.machine_id}
-                    </span>
-                    <span className="font-bold text-white text-sm truncate max-w-[140px]">{m.name}</span>
-                  </div>
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                      m.status === 'Critical'
-                        ? 'bg-rose-500/20 border-rose-500/30 text-rose-300'
-                        : m.status === 'Warning'
-                        ? 'bg-amber-500/20 border-amber-500/30 text-amber-300'
-                        : 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
-                    }`}
-                  >
-                    {isTarget ? currentStatus : m.status}
-                  </span>
-                </div>
-
-                <div className="mt-3 grid grid-cols-4 gap-1 text-center font-mono text-xs bg-slate-900/90 rounded-xl p-2.5 border border-slate-800">
-                  <div>
-                    <div className="text-[9px] text-slate-400">TEMP</div>
-                    <div className="text-amber-400 font-bold">{temp !== null ? `${fmt(temp)}°` : '--'}</div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] text-slate-400">VIB</div>
-                    <div className="text-rose-400 font-bold">{vib !== null ? fmt(vib, 2) : '--'}</div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] text-slate-400">CURR</div>
-                    <div className="text-cyan-400 font-bold">{curr !== null ? `${fmt(curr)}A` : '--'}</div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] text-slate-400">RPM</div>
-                    <div className="text-purple-400 font-bold">{rpm !== null ? fmt(rpm, 0) : '--'}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ========================================================================= */}
-      {/* 4. REAL-TIME FASTAPI TELEMETRY PACKET CONSOLE EVENT STREAM */}
-      {/* ========================================================================= */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-2xl font-mono text-xs space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div className="flex items-center gap-2 text-slate-300 font-semibold">
-            <Terminal className="h-4 w-4 text-cyan-400" />
-            <span>FastAPI Real-Time Telemetry Event Log</span>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* ISO 10816-3 Severity Assessment Card */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+              <Layers className="h-4 w-4 text-cyan-400" /> ISO 10816-3 Diagnostic Zone
+            </h3>
+            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border ${analysisMetrics.isoBg} ${analysisMetrics.isoColor}`}>
+              {analysisMetrics.isoZone.split(' ')[0]} {analysisMetrics.isoZone.split(' ')[1]}
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setPacketLogs([])}
-              className="text-[10px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-900 border border-slate-800"
-            >
-              Clear Log
-            </button>
-            <span className="text-[11px] text-slate-500">PostgreSQL Ingestion Feed</span>
-          </div>
-        </div>
 
-        <div className="max-h-52 overflow-y-auto space-y-1.5 pr-2 custom-scrollbar">
-          {packetLogs.length === 0 ? (
-            <div className="text-slate-500 py-4 text-center">
-              Waiting for live incoming telemetry packets from ESP32 nodes...
+          <div className="space-y-2.5 text-xs">
+            <div className="flex justify-between items-center py-1 border-b border-slate-800/50">
+              <span className="text-slate-400">Vibration RMS:</span>
+              <span className="font-mono font-bold text-white">{analysisMetrics.vibrationRms.toFixed(2)} mm/s</span>
             </div>
-          ) : (
-            packetLogs.map((log) => (
-              <div
-                key={log.id}
-                className="flex items-center justify-between rounded-lg bg-slate-900/60 px-3 py-1.5 border border-slate-800/60 hover:bg-slate-900 transition-colors"
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <span className="text-slate-500">[{log.time}]</span>
-                  <span className="text-cyan-400 font-bold">[{log.source}]</span>
-                  <span className="text-slate-200 truncate">{log.text}</span>
-                </div>
+            <div className="flex justify-between items-center py-1 border-b border-slate-800/50">
+              <span className="text-slate-400">Peak Vibration:</span>
+              <span className="font-mono font-bold text-rose-400">{analysisMetrics.vibrationPeak.toFixed(2)} mm/s</span>
+            </div>
+            <div className="flex justify-between items-center py-1 border-b border-slate-800/50">
+              <span className="text-slate-400">Crest Factor:</span>
+              <span className="font-mono font-bold text-cyan-400">{analysisMetrics.crestFactor.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between items-center py-1">
+              <span className="text-slate-400">Average Temp:</span>
+              <span className="font-mono font-bold text-amber-400">{analysisMetrics.tempAvg.toFixed(1)}°C</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Packet Logs Terminal */}
+        <div className="lg:col-span-2 rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-xl font-mono text-xs space-y-2">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-slate-400">
+            <div className="flex items-center gap-2">
+              <Terminal className="h-4 w-4 text-cyan-400" />
+              <span className="font-bold text-slate-200">Simulation Packet Stream Log</span>
+            </div>
+            <span className="text-[10px] text-slate-500">Auto-scrolling stream</span>
+          </div>
+
+          <div className="h-40 overflow-y-auto space-y-1 pr-1 scrollbar-thin scrollbar-thumb-slate-800 text-[11px]">
+            {packetLogs.map((log) => (
+              <div key={log.id} className="flex items-start gap-2 py-0.5 leading-tight">
+                <span className="text-slate-600 shrink-0">{log.time}</span>
                 <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${
+                  className={`px-1 rounded text-[9px] font-bold shrink-0 ${
                     log.status === 'CRITICAL'
-                      ? 'bg-rose-500/20 text-rose-400'
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                       : log.status === 'WARNING'
-                      ? 'bg-amber-500/20 text-amber-400'
-                      : 'bg-emerald-500/20 text-emerald-400'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                   }`}
                 >
                   {log.status}
                 </span>
+                <span className="text-slate-300 truncate">{log.text}</span>
               </div>
-            ))
-          )}
+            ))}
+          </div>
         </div>
       </div>
     </div>
