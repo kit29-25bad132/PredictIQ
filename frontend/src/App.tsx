@@ -15,9 +15,13 @@ import SensorDataPage from './pages/SensorDataPage';
 import SettingsPage from './pages/SettingsPage';
 import ManualSensorModal from './components/ManualSensorModal';
 import AddMachineModal from './components/AddMachineModal';
-import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
+import HomePage from './pages/HomePage';
+import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw, Lock } from 'lucide-react';
+
+type AppRoute = 'home' | 'dashboard';
 
 export function App() {
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>('home');
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [selectedMachineId, setSelectedMachineId] = useState<string>('');
   const [machines, setMachines] = useState<Machine[]>([]);
@@ -50,14 +54,6 @@ export function App() {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 3500);
   };
-
-  const handleLogout = useCallback(async () => {
-    try {
-      await api.logout();
-    } catch {
-      // Logout even if the request fails (e.g. backend unreachable)
-    }
-  }, []);
 
   // Primary Data Fetcher
   const loadFleetData = useCallback(async () => {
@@ -94,20 +90,21 @@ export function App() {
     }
   }, [selectedMachineId]);
 
-  // Initial Load
+  // Initial Load (dashboard only: the public homepage makes no API requests)
   useEffect(() => {
+    if (currentRoute !== 'dashboard') return;
     loadFleetData();
-  }, [loadFleetData]);
+  }, [loadFleetData, currentRoute]);
 
   // Polling loop
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (currentRoute !== 'dashboard' || !autoRefresh) return;
     const interval = setInterval(() => {
       loadFleetData();
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [autoRefresh, loadFleetData]);
+  }, [autoRefresh, loadFleetData, currentRoute]);
 
   // Navigation handlers
   const handleSelectMachine = (machineId: string) => {
@@ -135,6 +132,12 @@ export function App() {
     }
   };
 
+  // Route 1: public landing page (no authentication, no API data)
+  if (currentRoute === 'home') {
+    return <HomePage onNavigate={() => setCurrentRoute('dashboard')} />;
+  }
+
+  // Route 2: read-only industrial dashboard
   return (
     <div id="predictiq-root" className="flex min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950">
       {/* Sidebar Navigation */}
@@ -146,7 +149,6 @@ export function App() {
         backendOnline={backendOnline}
         isMobileOpen={isMobileNavOpen}
         onCloseMobile={() => setIsMobileNavOpen(false)}
-        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
@@ -176,6 +178,18 @@ export function App() {
           <span className="font-mono text-xs text-cyan-400 font-bold">
             Predict IQ
           </span>
+        </div>
+
+        {/* Login-Free / Read-Only Notice */}
+        <div className="mx-4 mt-4 sm:mx-6 lg:mx-8 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-3 text-cyan-100">
+          <div className="flex items-start gap-3">
+            <Lock className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
+            <p className="text-xs text-cyan-100/80">
+              <span className="font-bold text-cyan-300">Read-only demo:</span> this dashboard opens without a login.
+              Write actions (manual input, maintenance, feedback, alert updates) require a backend operator session and
+              are rejected with HTTP 401 until one is established.
+            </p>
+          </div>
         </div>
 
         {/* Backend Unavailable Warning Banner */}
