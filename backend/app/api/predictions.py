@@ -1,4 +1,23 @@
-"""Typed prediction and explanation API endpoints."""
+"""
+Typed prediction and explanation API endpoints (multi-tenant).
+
+Phase 3 policy
+--------------
+* Prediction reads (history, latest) are organization-scoped.
+* ``POST /api/predict`` keeps the device API-key gate and derives the
+  organization from the registered machine; the model itself is platform-wide.
+* ``POST /api/predictions/analyze`` keeps the device API-key gate, requires a
+  registered device, and derives the organization from that device.
+* ``POST /api/train-model`` and ``GET /api/model-evaluation`` are operator-only.
+
+Training-data policy (explicit)
+-------------------------------
+PredictIQ runs ONE platform-global model, not a per-organization model. Training
+is an operator-only governance action and intentionally uses curated feedback
+from all organizations; therefore no organization-specific model is ever built
+from mixed tenants, and no tenant can trigger or influence another tenant's
+model. Per-organization models would require a separate approved design.
+"""
 
 import hashlib
 import json
@@ -9,9 +28,10 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from backend.app.core.auth import require_api_key
+from backend.app.core.auth import require_api_key, require_operator_session
+from backend.app.core.tenant import OrganizationContext, require_org_member
 from backend.app.db.database import get_db
-from backend.app.db.models import Machine, Prediction, SensorReading
+from backend.app.db.models import Device, Machine, Prediction, SensorReading
 from backend.app.schemas.sensor import (
     ModelEvaluationResponse,
     ModelStatusResponse,
@@ -63,15 +83,24 @@ def insufficient_data(machine_id: str) -> PredictionResponse:
     )
 
 
-@router.get("/model-status", response_model=ModelStatusResponse)
-def get_ai_model_status() -> ModelStatusResponse:
+@router.get("/model-status", response_model=ModelStatusResponse,
+            summary="AI model readiness for the caller's organization")
+def get_ai_model_status(ctx: OrganizationContext = Depends(require_org_member)) -> ModelStatusResponse:
     model_status = prediction_service.get_status()
     return ModelStatusResponse(**model_status)
 
 
-@router.get("/model-evaluation", response_model=ModelEvaluationResponse)
-def get_model_evaluation(db: Session = Depends(get_db)) -> ModelEvaluationResponse:
-    """Honest prototype-vs-reality evaluation from stored ground truth."""
+@router.get("/model-evaluation", response_model=ModelEvaluationResponse,
+            summary="Platform model evaluation (operator only)")
+def get_model_evaluation(
+    _operator: None = Depends(require_operator_session),
+    db: Session = Depends(get_db),
+) -> ModelEvaluationResponse:
+    """Honest prototype-vs-reality evaluation from all stored ground truth.
+
+    Operator-only: the training pool spans organizations, so it must not be
+    exposed to a tenant user.
+    """
     from backend.app.services.model_evaluation import build_evaluation
 
     report = build_evaluation(db)
@@ -81,13 +110,13 @@ def get_model_evaluation(db: Session = Depends(get_db)) -> ModelEvaluationRespon
 
 
 @router.post("/train-model", response_model=ModelTrainResponse,
-             dependencies=[Depends(require_api_key)])
+             dependencies=[Depends(require_operator_session)],
+             summary="Train the platform model (operator only)")
 def train_governed_ml_model(payload: ModelTrainRequest, db: Session = Depends(get_db)) -> ModelTrainResponse:
-    """Explicit, governed training on curated technician labels only (ADR-005).
+    """Operator-only governed training on curated technician labels (ADR-005).
 
-    Feedback ingestion never calls this: training happens only here, and only
-    when enough two-class ground truth exists. Returns HTTP 200 with
-    ``success=false`` on honest refusals so clients can display the reason.
+    Feed stock is platform-wide by design (see module docstring): this endpoint
+    never builds a per-organization model from mixed tenants.
     """
     from backend.app.services.model_evaluation import build_evaluation
     from ml.train import train_governed_model
@@ -127,7 +156,8 @@ def train_governed_ml_model(payload: ModelTrainRequest, db: Session = Depends(ge
 
 
 @router.post("/predict", response_model=PredictionResponse, status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_api_key)])
+             dependencies=[Depends(require_api_key)],
+             summary="Deterministic prototype prediction for a registered machine")
 def execute_prediction(payload: PredictionInput, db: Session = Depends(get_db)) -> PredictionResponse:
     machine = db.query(Machine).filter(Machine.machine_id == payload.machine_id).first()
     if not machine:
@@ -147,6 +177,7 @@ def execute_prediction(payload: PredictionInput, db: Session = Depends(get_db)) 
     )
     now = datetime.now(timezone.utc)
     prediction = Prediction(
+        organization_id=machine.organization_id,
         machine_id=machine.machine_id,
         timestamp=now,
         failure_probability=result["failure_probability"],
@@ -170,58 +201,50 @@ def execute_prediction(payload: PredictionInput, db: Session = Depends(get_db)) 
 
 @router.post("/predictions/analyze", response_model=PredictionAnalyzeResponse,
              status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_api_key)])
+             dependencies=[Depends(require_api_key)],
+             summary="External-AI assessment of the latest real telemetry")
 def analyze_prediction(
     payload: PredictionAnalyzeRequest, response: Response, db: Session = Depends(get_db)
 ) -> PredictionAnalyzeResponse:
     """External-AI (Gemini) assessment of the latest REAL telemetry.
 
-    Data-integrity rules enforced here:
-
-    - Telemetry is NEVER taken from the request; the analyzed reading is the
-      latest stored SensorReading for the exact (device_id, machine_id) pair.
-      A row from the same device bound to another machine is never used.
-    - Unknown device, unknown machine, or device-bound-to-other-machine => 404
-      BEFORE any provider call. No exact device+machine telemetry => 404.
-    - Missing GEMINI_API_KEY, provider failure, timeout, or invalid AI output
-      => 502-style error with NO prediction row created and no fake fallback.
-    - Idempotency: the same device+machine+telemetry input hashes to the same
-      ``inference_input_hash``; an existing row with that hash is returned as
-      200 instead of creating a duplicate.
+    Tenant isolation: the device must be registered and bound to the requested
+    machine; the organization is derived from that device. Telemetry is never
+    taken from the request.
     """
     machine = db.query(Machine).filter(Machine.machine_id == payload.machine_id).first()
     if not machine:
         raise HTTPException(status_code=404, detail=f"Machine '{payload.machine_id}' does not exist in registry.")
 
-    device = (
-        db.query(SensorReading.device_id)
-        .filter(
-            SensorReading.device_id == payload.device_id,
-            SensorReading.machine_id == payload.machine_id,
-        )
-        .first()
-    )
+    device = db.query(Device).filter(Device.device_id == payload.device_id).first()
     if device is None:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"No telemetry found for device '{payload.device_id}' on machine "
-                f"'{payload.machine_id}'. Refusing to analyze without an exact "
-                "device+machine match."
-            ),
+            detail=f"Device '{payload.device_id}' is not registered.",
         )
+    if device.machine_id != payload.machine_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Device '{payload.device_id}' is registered to machine '{device.machine_id}', not '{payload.machine_id}'.",
+        )
+    if device.organization_id != machine.organization_id:
+        raise HTTPException(status_code=400, detail="Device and machine do not share an organization.")
 
     reading = (
         db.query(SensorReading)
         .filter(
+            SensorReading.organization_id == device.organization_id,
             SensorReading.device_id == payload.device_id,
             SensorReading.machine_id == payload.machine_id,
         )
         .order_by(desc(SensorReading.timestamp), desc(SensorReading.id))
         .first()
     )
-    if reading is None:  # Defensive; the device probe above already guarantees a row.
-        raise HTTPException(status_code=404, detail="No telemetry found for the exact device+machine pair.")
+    if reading is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No telemetry found for the exact device+machine pair.",
+        )
 
     telemetry = TelemetryInput(
         device_id=reading.device_id,
@@ -243,13 +266,11 @@ def analyze_prediction(
         json.dumps(inference_input, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
-    # Deterministic idempotency: identical device+machine+telemetry input must
-    # not create duplicate prediction rows. Model id + hash identifies exactly
-    # one analysis of one telemetry input.
     predictor = get_predictor()
     existing = (
         db.query(Prediction)
         .filter(
+            Prediction.organization_id == device.organization_id,
             Prediction.machine_id == payload.machine_id,
             Prediction.model_version == predictor.model_identifier,
             Prediction.input_hash == input_hash,
@@ -258,28 +279,27 @@ def analyze_prediction(
         .first()
     )
     if existing is not None:
-        # Idempotent replay: already persisted for this exact input.
         response.status_code = status.HTTP_200_OK
         return _analyze_response(existing)
 
     try:
         assessment = predictor.analyze_telemetry(telemetry)
     except AIPredictorError as exc:
-        # Fail safe: no row, no fallback prediction, honest error surface.
         raise HTTPException(status_code=502, detail=f"External AI analysis failed: {exc}") from exc
 
     observed_at = _normalise_utc(reading.timestamp)
     now = datetime.now(timezone.utc)
     prediction = Prediction(
+        organization_id=device.organization_id,
         machine_id=machine.machine_id,
-        timestamp=observed_at,  # real telemetry timestamp, never wall clock
+        timestamp=observed_at,
         failure_probability=assessment.failure_probability,
         component=assessment.likely_component,
         confidence=assessment.confidence,
         explanation=assessment.explanation,
         recommended_action=assessment.recommended_action,
         model_version=predictor.model_identifier,
-        is_prototype=False,  # external AI assessment, not the physics prototype
+        is_prototype=False,
         input_hash=input_hash,
         explanation_data=json.dumps(
             {
@@ -302,14 +322,29 @@ def analyze_prediction(
     return _analyze_response(prediction)
 
 
-@router.get("/machines/{machine_id}/prediction", response_model=PredictionResponse)
-def get_machine_prediction(machine_id: str, db: Session = Depends(get_db)) -> PredictionResponse:
-    machine = db.query(Machine).filter(Machine.machine_id == machine_id).first()
+@router.get("/machines/{machine_id}/prediction", response_model=PredictionResponse,
+            summary="Latest prediction for a machine in the caller's organization")
+def get_machine_prediction(
+    machine_id: str,
+    ctx: OrganizationContext = Depends(require_org_member),
+    db: Session = Depends(get_db),
+) -> PredictionResponse:
+    machine = (
+        db.query(Machine)
+        .filter(
+            Machine.organization_id == ctx.organization_id,
+            Machine.machine_id == machine_id,
+        )
+        .first()
+    )
     if not machine:
         raise HTTPException(status_code=404, detail=f"Machine '{machine_id}' does not exist in registry.")
     latest_prediction = (
         db.query(Prediction)
-        .filter(Prediction.machine_id == machine_id)
+        .filter(
+            Prediction.organization_id == ctx.organization_id,
+            Prediction.machine_id == machine_id,
+        )
         .order_by(desc(Prediction.timestamp))
         .first()
     )
@@ -318,9 +353,16 @@ def get_machine_prediction(machine_id: str, db: Session = Depends(get_db)) -> Pr
     return insufficient_data(machine_id)
 
 
-@router.get("/predictions", response_model=List[PredictionResponse])
-def list_predictions(machine_id: Optional[str] = None, db: Session = Depends(get_db)) -> List[PredictionResponse]:
-    query = db.query(Prediction)
+@router.get("/predictions", response_model=List[PredictionResponse],
+            summary="List predictions in the caller's organization")
+def list_predictions(
+    ctx: OrganizationContext = Depends(require_org_member),
+    machine_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+) -> List[PredictionResponse]:
+    query = db.query(Prediction).filter(
+        Prediction.organization_id == ctx.organization_id
+    )
     if machine_id:
         query = query.filter(Prediction.machine_id == machine_id)
     return [response_from_prediction(item) for item in query.order_by(desc(Prediction.timestamp)).all()]
@@ -342,13 +384,7 @@ def _normalise_utc(value: datetime) -> datetime:
 
 
 def _analyze_response(prediction: Prediction) -> PredictionAnalyzeResponse:
-    """Map a persisted analyze-row onto the response schema, defensively.
-
-    explanation_data is written ONLY after strict AI-output validation, but a
-    corrupted or hand-edited row must degrade to an honest 200 response built
-    from the persisted columns, never a 500. Newly generated assessments are
-    unaffected: their validation happens earlier in analyze_prediction.
-    """
+    """Map a persisted analyze-row onto the response schema, defensively."""
     try:
         data = json.loads(prediction.explanation_data or "{}")
         if not isinstance(data, dict):
@@ -366,7 +402,7 @@ def _analyze_response(prediction: Prediction) -> PredictionAnalyzeResponse:
         try:
             input_timestamp = datetime.fromisoformat(raw_ts)
         except (TypeError, ValueError):
-            pass  # Corrupted timestamp: fall back to the persisted row timestamp.
+            pass
 
     return PredictionAnalyzeResponse(
         id=prediction.id,

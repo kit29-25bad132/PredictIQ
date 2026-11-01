@@ -1,38 +1,30 @@
+"""
+Prediction API tests (Phase 3: organization-scoped reads, device-gated writes).
+
+The prediction engine itself is stateless and unchanged. Route-level tests prove:
+- POST /api/predict stays device-authenticated (telemetry/prototype path)
+- prediction reads require an authenticated organization member
+- stored predictions are only visible to their own machine/organization
+"""
+
 import json
-from datetime import datetime, timezone
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.app.core import auth as auth_module
+from backend.app.core.config import get_settings
 from backend.app.db.database import Base, get_db
-from backend.app.db.models import Machine, Prediction
+from backend.app.db.models import Machine, Organization, Prediction
 from backend.app.main import app
 from backend.app.services.prediction_service import prediction_service
+from backend.tests.tenant_utils import USER_A, USER_B, auth_headers, install_auth, seed_membership
 
-
-@pytest.fixture
-def session() -> Session:
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
-    with factory() as db:
-        yield db
-
-
-def add_machine(db: Session, machine_id: str = "M-PRED", **specs) -> Machine:
-    machine = Machine(
-        machine_id=machine_id,
-        name="Prediction test machine",
-        type="Centrifugal Pump",
-        location="Test bay",
-        **specs,
-    )
-    db.add(machine)
-    db.commit()
-    return machine
+DEVICE_KEY = "prediction-device-key"
 
 
 def normal_features() -> dict:
@@ -73,12 +65,41 @@ def test_prediction_service_uses_machine_specific_specs() -> None:
     assert specific_result["is_prototype"] is True
 
 
-def test_prediction_api_persists_and_returns_explanation() -> None:
+@pytest.fixture
+def api(monkeypatch):
+    install_auth(monkeypatch)
+    get_settings().device_api_key = DEVICE_KEY
+    auth_module._WARNED_UNCONFIGURED = False
+
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    org_id = uuid.uuid4()
     with factory() as db:
-        add_machine(db)
+        org = Organization(id=org_id, name="Predictions", slug="predictions")
+        db.add(org)
+        db.flush()
+        seed_membership(db, org, "owner", user_id=USER_A)
+        db.add(
+            Machine(
+                organization_id=org_id,
+                machine_id="M-PRED",
+                name="Prediction test machine",
+                type="Centrifugal Pump",
+                location="Test bay",
+            )
+        )
+        db.add(
+            Machine(
+                organization_id=org_id,
+                machine_id="M-EMPTY",
+                name="Empty machine",
+                type="Centrifugal Pump",
+                location="Test bay",
+            )
+        )
+        db.commit()
 
     def override_get_db():
         with factory() as db:
@@ -86,91 +107,105 @@ def test_prediction_api_persists_and_returns_explanation() -> None:
 
     app.dependency_overrides[get_db] = override_get_db
     try:
-        with TestClient(app) as client:
-            response = client.post("/api/predict", json={"machine_id": "M-PRED", **normal_features()})
-            assert response.status_code == 201
-            result = response.json()
-            assert result["prediction_available"] is True
-            assert result["is_prototype"] is True
-            assert result["feature_importance"]
-            assert result["contributing_factors"]
-            assert "remaining_life_days" not in result
-            assert "confidence" not in result
-
-            latest = client.get("/api/machines/M-PRED/prediction")
-            assert latest.status_code == 200
-            assert latest.json()["explanation"] == result["explanation"]
-
-        with factory() as db:
-            stored = db.query(Prediction).one()
-            assert stored.is_prototype is True
-            assert json.loads(stored.explanation_data)["contributing_factors"]
+        yield TestClient(app), factory, str(org_id)
     finally:
+        get_settings().device_api_key = ""
+        auth_module._WARNED_UNCONFIGURED = False
         app.dependency_overrides.pop(get_db, None)
 
 
-def test_prediction_api_returns_insufficient_data_for_machine_without_prediction() -> None:
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
+def test_prediction_api_persists_and_returns_explanation(api):
+    client, factory, org_id = api
+    response = client.post(
+        "/api/predict",
+        json={"machine_id": "M-PRED", **normal_features()},
+        headers={"X-API-Key": DEVICE_KEY},
+    )
+    assert response.status_code == 201, response.text
+    result = response.json()
+    assert result["prediction_available"] is True
+    assert result["is_prototype"] is True
+    assert result["feature_importance"]
+    assert result["contributing_factors"]
+    assert "remaining_life_days" not in result
+    assert "confidence" not in result
+
+    latest = client.get("/api/machines/M-PRED/prediction", headers=auth_headers(USER_A, org_id))
+    assert latest.status_code == 200
+    assert latest.json()["explanation"] == result["explanation"]
+
     with factory() as db:
-        add_machine(db, "M-EMPTY")
-
-    def override_get_db():
-        with factory() as db:
-            yield db
-
-    app.dependency_overrides[get_db] = override_get_db
-    try:
-        response = TestClient(app).get("/api/machines/M-EMPTY/prediction")
-        assert response.status_code == 200
-        assert response.json()["prediction_available"] is False
-        assert "remaining_life_days" not in response.json()
-    finally:
-        app.dependency_overrides.pop(get_db, None)
+        stored = db.query(Prediction).one()
+        assert stored.is_prototype is True
+        assert str(stored.organization_id) == org_id
+        assert json.loads(stored.explanation_data)["contributing_factors"]
 
 
-def test_prediction_api_rejects_unknown_machine_and_invalid_features() -> None:
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
+def test_prediction_reads_require_authentication(api):
+    client, _, _ = api
+    assert client.get("/api/machines/M-PRED/prediction").status_code == 401
+    assert client.get("/api/predictions").status_code == 401
+
+
+def test_prediction_api_returns_insufficient_data_for_machine_without_prediction(api):
+    client, _, org_id = api
+    response = client.get("/api/machines/M-EMPTY/prediction", headers=auth_headers(USER_A, org_id))
+    assert response.status_code == 200
+    assert response.json()["prediction_available"] is False
+    assert "remaining_life_days" not in response.json()
+
+
+def test_prediction_api_rejects_unknown_machine_and_invalid_features(api):
+    client, _, _ = api
+    headers = {"X-API-Key": DEVICE_KEY}
+    missing = client.post(
+        "/api/predict", json={"machine_id": "MISSING", **normal_features()}, headers=headers
+    )
+    invalid = client.post(
+        "/api/predict",
+        json={"machine_id": "M-PRED", **normal_features(), "temperature": 301},
+        headers=headers,
+    )
+    assert missing.status_code == 404
+    assert invalid.status_code == 422
+
+
+def test_prediction_reads_are_organization_scoped(api):
+    client, _, org_id = api
+    client.post(
+        "/api/predict",
+        json={"machine_id": "M-PRED", **normal_features()},
+        headers={"X-API-Key": DEVICE_KEY},
+    )
+    # A user without an active membership in this organization cannot see the
+    # prediction; the denial is uniform and non-disclosing.
+    outsider = auth_headers(USER_B, org_id)
+    assert client.get("/api/machines/M-PRED/prediction", headers=outsider).status_code == 404
+    denied = client.get("/api/predictions", headers=outsider)
+    assert denied.status_code == 404
+    assert "access denied" in denied.json()["detail"].lower()
+
+
+def test_prediction_api_keeps_machine_predictions_isolated(api):
+    client, factory, org_id = api
     with factory() as db:
-        add_machine(db)
+        db.add(
+            Machine(
+                organization_id=uuid.UUID(org_id),
+                machine_id="M-TWO",
+                name="Second",
+                type="Centrifugal Pump",
+                location="Test bay",
+            )
+        )
+        db.commit()
 
-    def override_get_db():
-        with factory() as db:
-            yield db
-
-    app.dependency_overrides[get_db] = override_get_db
-    try:
-        with TestClient(app) as client:
-            missing = client.post("/api/predict", json={"machine_id": "MISSING", **normal_features()})
-            invalid = client.post("/api/predict", json={"machine_id": "M-PRED", **normal_features(), "temperature": 301})
-        assert missing.status_code == 404
-        assert invalid.status_code == 422
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-
-def test_prediction_api_keeps_machine_predictions_isolated() -> None:
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
-    with factory() as db:
-        add_machine(db, "M-ONE")
-        add_machine(db, "M-TWO")
-
-    def override_get_db():
-        with factory() as db:
-            yield db
-
-    app.dependency_overrides[get_db] = override_get_db
-    try:
-        with TestClient(app) as client:
-            first = client.post("/api/predict", json={"machine_id": "M-ONE", **normal_features()})
-            second = client.get("/api/machines/M-TWO/prediction")
-        assert first.status_code == 201
-        assert second.status_code == 200
-        assert second.json()["prediction_available"] is False
-    finally:
-        app.dependency_overrides.pop(get_db, None)
+    first = client.post(
+        "/api/predict",
+        json={"machine_id": "M-PRED", **normal_features()},
+        headers={"X-API-Key": DEVICE_KEY},
+    )
+    second = client.get("/api/machines/M-TWO/prediction", headers=auth_headers(USER_A, org_id))
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.json()["prediction_available"] is False

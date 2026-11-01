@@ -102,6 +102,7 @@ def evaluate_reading(machine: Machine, reading: SensorReading, db: Session) -> H
         recent = (
             db.query(Alert)
             .filter(
+                Alert.organization_id == machine.organization_id,
                 Alert.machine_id == machine.machine_id,
                 Alert.alert_type == alert_type,
                 Alert.status != "RESOLVED",
@@ -112,6 +113,7 @@ def evaluate_reading(machine: Machine, reading: SensorReading, db: Session) -> H
         if recent is None:
             db.add(
                 Alert(
+                    organization_id=machine.organization_id,
                     machine_id=machine.machine_id,
                     alert_type=alert_type,
                     severity=severity,
@@ -146,6 +148,7 @@ def _maybe_generate_prototype_prediction(
     recent_prediction = (
         db.query(Prediction)
         .filter(
+            Prediction.organization_id == machine.organization_id,
             Prediction.machine_id == machine.machine_id,
             # Cooldown runs on the TELEMETRY timeline (Prediction.timestamp holds
             # the reading's observed_at), not wall-clock created_at: replayed or
@@ -177,6 +180,7 @@ def _maybe_generate_prototype_prediction(
         )
         db.add(
             Prediction(
+                organization_id=machine.organization_id,
                 machine_id=machine.machine_id,
                 timestamp=observed_at,
                 failure_probability=result["failure_probability"],

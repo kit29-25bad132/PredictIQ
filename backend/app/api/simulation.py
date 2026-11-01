@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.core.auth import require_operator_session
+from backend.app.core.tenant import OrganizationContext, require_org_member
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, MachineSimulationConfig
 from backend.app.schemas.simulation import (
@@ -32,27 +33,33 @@ router = APIRouter(tags=["Digital Twin Simulation Configuration"])
 _AUTH = Depends(require_operator_session)
 
 
-def _get_or_create_config(machine_id: str, db: Session) -> MachineSimulationConfig:
-    machine = db.query(Machine).filter(Machine.machine_id == machine_id).first()
-    if not machine:
-        machine = Machine(
-            machine_id=machine_id,
-            name=f"Digital Twin {machine_id}",
-            type="Induction Motor",
-            location="Simulation Bay",
-            rated_rpm=1500.0,
-            rated_current=2.0,
-            max_temp=60.0,
-            status="Healthy",
-        )
-        db.add(machine)
-        db.commit()
-        db.refresh(machine)
+def _get_or_create_config(
+    machine_id: str, db: Session, organization_id=None
+) -> MachineSimulationConfig:
+    """Load the config for a machine inside an organization.
 
-    config = db.query(MachineSimulationConfig).filter(MachineSimulationConfig.machine_id == machine_id).first()
+    Machines are no longer auto-created: provisioning is an explicit admin or
+    operator action. When ``organization_id`` is None the caller is the
+    platform operator and the machine's own organization is used.
+    """
+    query = db.query(Machine).filter(Machine.machine_id == machine_id)
+    if organization_id is not None:
+        query = query.filter(Machine.organization_id == organization_id)
+    machine = query.first()
+    if not machine:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Machine '{machine_id}' was not found.",
+        )
+
+    config = db.query(MachineSimulationConfig).filter(
+        MachineSimulationConfig.organization_id == machine.organization_id,
+        MachineSimulationConfig.machine_id == machine_id,
+    ).first()
     if not config:
         # Create with machine rated specifications if available
         config = MachineSimulationConfig(
+            organization_id=machine.organization_id,
             machine_id=machine_id,
             motor_powered=True,
             simulation_mode="cycling",
@@ -101,10 +108,11 @@ def _get_or_create_config(machine_id: str, db: Session) -> MachineSimulationConf
 )
 def get_simulation_config(
     machine_id: str,
+    ctx: OrganizationContext = Depends(require_org_member),
     db: Session = Depends(get_db),
 ) -> SimulationConfigResponse:
-    """Returns the persistent simulation configuration for the given machine asset."""
-    config = _get_or_create_config(machine_id, db)
+    """Returns the persistent simulation configuration for a machine in the caller's organization."""
+    config = _get_or_create_config(machine_id, db, ctx.organization_id)
     return SimulationConfigResponse.model_validate(config)
 
 
@@ -159,11 +167,16 @@ def reset_simulation_config(
             detail=f"Machine '{machine_id}' does not exist in registry.",
         )
 
-    config = db.query(MachineSimulationConfig).filter(MachineSimulationConfig.machine_id == machine_id).first()
+    config = db.query(MachineSimulationConfig).filter(
+        MachineSimulationConfig.organization_id == machine.organization_id,
+        MachineSimulationConfig.machine_id == machine_id,
+    ).first()
     defaults = SimulationConfigBase()
 
     if not config:
-        config = MachineSimulationConfig(machine_id=machine_id)
+        config = MachineSimulationConfig(
+            organization_id=machine.organization_id, machine_id=machine_id
+        )
         db.add(config)
 
     for key, value in defaults.model_dump().items():

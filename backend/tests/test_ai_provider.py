@@ -29,8 +29,9 @@ from sqlalchemy.pool import StaticPool
 from backend.app.core import auth as auth_module
 from backend.app.core.config import get_settings
 from backend.app.db.database import Base, get_db
-from backend.app.db.models import Machine, Prediction, SensorReading
+from backend.app.db.models import Device, Machine, Organization, Prediction, SensorReading
 from backend.app.main import app
+from backend.tests.tenant_utils import USER_A, auth_headers, install_auth, seed_membership
 from backend.app.services.ai_provider import (
     AIPredictorError,
     GeminiProvider,
@@ -84,7 +85,8 @@ def blocked_transport():
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    install_auth(monkeypatch)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -121,12 +123,24 @@ def seed_machine(
     timestamp=datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc),
     reading_count=1,
 ):
-    """Seed a machine (once) and its readings. Readings are offset by minutes."""
+    """Seed an organization, machine, its registered device, and readings.
+
+    Returns the organization id so callers can build an authenticated user
+    context. Readings are offset by minutes.
+    """
     with factory() as db:
+        org = db.query(Organization).filter(Organization.slug == "ai-provider").first()
+        if org is None:
+            org = Organization(name="AI Provider", slug="ai-provider", status="active")
+            db.add(org)
+            db.flush()
+            seed_membership(db, org, "owner", user_id=USER_A)
+            db.commit()
         exists = db.query(Machine).filter(Machine.machine_id == machine_id).first()
         if not exists:
             db.add(
                 Machine(
+                    organization_id=org.id,
                     machine_id=machine_id,
                     name=f"Machine {machine_id}",
                     type="Centrifugal Pump",
@@ -138,9 +152,26 @@ def seed_machine(
                 )
             )
             db.commit()
+        if device_id:
+            device = db.query(Device).filter(Device.device_id == device_id).first()
+            if device is None:
+                db.add(
+                    Device(
+                        organization_id=org.id,
+                        device_id=device_id,
+                        machine_id=machine_id,
+                        device_type="ESP32",
+                        firmware_version="1.0.0",
+                        status="ONLINE",
+                        last_seen=timestamp,
+                        source="WOKWI",
+                    )
+                )
+                db.commit()
         for offset in range(reading_count if with_readings else 0):
             db.add(
                 SensorReading(
+                    organization_id=org.id,
                     machine_id=machine_id,
                     device_id=device_id,
                     timestamp=datetime.fromtimestamp(
@@ -154,6 +185,11 @@ def seed_machine(
                 )
             )
         db.commit()
+        return str(org.id)
+
+
+def _user_headers(factory) -> dict:
+    return auth_headers(USER_A, seed_machine(factory, with_readings=False))
 
 
 def analyze(client, device_id="ESP32_001", machine_id="TEST-001"):
@@ -341,10 +377,11 @@ class TestAnalyzeEndpoint:
         seed_machine(factory, machine_id="OTHER-001", device_id="ESP32_002")  # readings
         seed_machine(factory, machine_id="THIRD-001", with_readings=False)  # NO readings
 
-        # ESP32_001 is bound to TEST-001 only; asking for it on THIRD-001 must 404
-        # and must NOT fall back to the ESP32_001/TEST-001 telemetry.
+        # ESP32_001 is bound to TEST-001 only; asking for it on THIRD-001 must be
+        # rejected and must NOT fall back to the ESP32_001/TEST-001 telemetry.
         response = analyze(testclient, device_id="ESP32_001", machine_id="THIRD-001")
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert "registered to machine" in response.json()["detail"]
         _patch_analyze(_always_valid)
         try:
             ok = analyze(testclient, device_id="ESP32_002", machine_id="OTHER-001")
@@ -809,15 +846,31 @@ class TestGeminiRequestContract:
 
 class TestTrainModelUnchanged:
     def test_insufficient_ground_truth_refusal_still_works(self, client):
+        """Training is platform/operator-only: tenant credentials cannot trigger it."""
         testclient, factory = client
         seed_machine(factory, with_readings=False)
-        response = testclient.post(
-            "/api/train-model", json={}, headers={"X-API-Key": TEST_KEY}
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["success"] is False
-        assert body["refusal"] == "insufficient_labeled_data"
+        headers = _user_headers(factory)
+        # Configure the operator gate (but never log in) so the denial is 401, not 503.
+        get_settings().operator_password = "ai-provider-test-password"
+        get_settings().operator_session_secret = "ai-provider-test-secret"
+        try:
+            assert testclient.post("/api/train-model", json={}, headers=headers).status_code == 401
+            assert testclient.post(
+                "/api/train-model", json={}, headers={"X-API-Key": TEST_KEY}
+            ).status_code == 401
+
+            login = testclient.post(
+                "/api/auth/login", json={"password": "ai-provider-test-password"}
+            )
+            assert login.status_code == 200
+            response = testclient.post("/api/train-model", json={})
+            assert response.status_code == 200
+            body = response.json()
+            assert body["success"] is False
+            assert body["refusal"] == "insufficient_labeled_data"
+        finally:
+            get_settings().operator_password = ""
+            get_settings().operator_session_secret = ""
 
 
 # ============================================================================
@@ -827,7 +880,8 @@ class TestTrainModelUnchanged:
 class TestAssistantChatEndpoint:
     def test_assistant_chat_returns_ai_reply(self, client, monkeypatch):
         testclient, factory = client
-        seed_machine(factory, machine_id="M001", with_readings=True)
+        org_id = seed_machine(factory, machine_id="M001", with_readings=True)
+        headers = auth_headers(USER_A, org_id)
         monkeypatch.setattr(get_settings(), "gemini_api_key", "test-gemini-key")
 
         fake_chat_response = json.dumps({
@@ -850,6 +904,7 @@ class TestAssistantChatEndpoint:
                     "message": "What is the vibration level?",
                     "history": [],
                 },
+                headers=headers,
             )
             assert response.status_code == 200
             data = response.json()
@@ -860,7 +915,8 @@ class TestAssistantChatEndpoint:
             _unpatch_transport()
 
     def test_assistant_chat_handles_general_query(self, client, monkeypatch):
-        testclient, _ = client
+        testclient, factory = client
+        headers = _user_headers(factory)
         monkeypatch.setattr(get_settings(), "gemini_api_key", "test-gemini-key")
 
         fake_chat_response = json.dumps({
@@ -881,6 +937,7 @@ class TestAssistantChatEndpoint:
                 json={
                     "message": "time",
                 },
+                headers=headers,
             )
             assert response.status_code == 200
             data = response.json()

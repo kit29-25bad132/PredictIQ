@@ -24,6 +24,7 @@ import uvicorn
 
 from backend.app.core.auth import API_KEY_HEADER, _warn_unconfigured_once
 from backend.app.core.config import get_settings
+from backend.app.core.tenant import OrganizationContext, require_org_member
 from backend.app.db.database import get_db, SessionLocal
 from backend.app.db.models import (
     Alert,
@@ -124,25 +125,80 @@ def health_check(db: Any = Depends(_liveness_db)) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/stats", response_model=dict, tags=["System Health"], summary="Fleet statistics from PostgreSQL")
-def fleet_stats(db: Any = Depends(_liveness_db)) -> Dict[str, Any]:
+@app.get("/api/stats", response_model=dict, tags=["System Health"], summary="Organization fleet statistics from PostgreSQL")
+def fleet_stats(
+    ctx: OrganizationContext = Depends(require_org_member),
+    db: Any = Depends(get_db),
+) -> Dict[str, Any]:
     """
-    DB-backed fleet KPIs for the dashboard (``api.ts:getFleetStats``).
-    Every value is computed from real rows — never hardcoded.
-    Degrades to honest zero values when the database is unreachable so the UI
-    shows an empty fleet instead of lying.
+    DB-backed fleet KPIs for the dashboard, scoped to the caller's organization.
+    Every value is computed from real rows — never hardcoded and never
+    cross-tenant.
     """
-    active_devices = _safe_connected_devices(db)
-    total_readings = _safe_count(func.count(SensorReading.id), SensorReading, db)
+    org_id = ctx.organization_id
+    active_devices = _org_connected_devices(db, org_id)
+    total_readings = _org_count(db, SensorReading, org_id)
     return {
-        "total_machines": _safe_count(func.count(Machine.id), Machine, db),
-        "total_devices": _safe_count(func.count(Device.id), Device, db),
+        "total_machines": _org_count(db, Machine, org_id),
+        "total_devices": _org_count(db, Device, org_id),
         "connected_devices": active_devices,
         "total_sensor_readings": total_readings,
-        "total_maintenance_records": _safe_count(func.count(MaintenanceRecord.id), MaintenanceRecord, db),
-        "active_alerts": _safe_active_alerts(db),
+        "total_maintenance_records": _org_count(db, MaintenanceRecord, org_id),
+        "active_alerts": _org_active_alerts(db, org_id),
         "data_collection_status": "ACTIVE" if active_devices > 0 else "WAITING",
     }
+
+
+def _org_count(db: Any, model, organization_id) -> int:
+    """Count rows for one organization; never cross-tenant."""
+    if db is None:
+        return 0
+    try:
+        return int(
+            db.query(func.count(model.id))
+            .filter(model.organization_id == organization_id)
+            .scalar()
+            or 0
+        )
+    except Exception:
+        return 0
+
+
+def _org_connected_devices(db: Any, organization_id) -> int:
+    from datetime import datetime, timedelta, timezone
+
+    if db is None:
+        return 0
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.device_timeout_seconds)
+        return int(
+            db.query(func.count(Device.id))
+            .filter(
+                Device.organization_id == organization_id,
+                Device.last_seen >= cutoff,
+            )
+            .scalar()
+            or 0
+        )
+    except Exception:
+        return 0
+
+
+def _org_active_alerts(db: Any, organization_id) -> int:
+    if db is None:
+        return 0
+    try:
+        return int(
+            db.query(func.count(Alert.id))
+            .filter(
+                Alert.organization_id == organization_id,
+                Alert.status == "ACTIVE",
+            )
+            .scalar()
+            or 0
+        )
+    except Exception:
+        return 0
 
 
 def _utc_now_iso() -> str:

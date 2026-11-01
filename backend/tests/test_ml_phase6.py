@@ -18,9 +18,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.app.core.config import get_settings
 from backend.app.db.database import Base, get_db
-from backend.app.db.models import Machine, Prediction
+from backend.app.db.models import Machine, Organization, Prediction
 from backend.app.main import app
+from backend.tests.tenant_utils import USER_A, auth_headers, install_auth, seed_membership, seed_organization
 from ml.train import (
     GOVERNANCE_FIELDS,
     MIN_LABELED_SAMPLES,
@@ -139,12 +141,23 @@ def test_zero_positive_edge_case_stays_honest():
     assert report["prototype_accuracy"] == pytest.approx(2 / 3, abs=1e-4)
 
 
+def _ensure_org(db):
+    org = db.query(Organization).first()
+    if org is None:
+        org = Organization(name="ML Org", slug="ml-org")
+        db.add(org)
+        db.flush()
+    return org
+
+
 def _seed_feedback_machine(db, machine_id="M-ML"):
-    db.add(Machine(machine_id=machine_id, name="ML machine", type="Centrifugal Pump", location="Bay"))
+    org = _ensure_org(db)
+    db.add(Machine(organization_id=org.id, machine_id=machine_id, name="ML machine", type="Centrifugal Pump", location="Bay"))
     db.commit()
     prediction_ids = []
     for index in range(4):
         prediction = Prediction(
+            organization_id=org.id,
             machine_id=machine_id,
             timestamp=datetime.now(timezone.utc),
             failure_probability=0.8 if index % 2 == 0 else 0.1,
@@ -159,7 +172,9 @@ def _seed_feedback_machine(db, machine_id="M-ML"):
     return prediction_ids
 
 
-def _client(factory):
+def _client(factory, monkeypatch):
+    install_auth(monkeypatch)
+
     def override_get_db():
         with factory() as db:
             yield db
@@ -168,13 +183,30 @@ def _client(factory):
     return TestClient(app)
 
 
-def test_feedback_to_evaluation_linkage_and_insufficient_state():
+def _login_operator(client) -> None:
+    """Establish a real operator session for the platform endpoints."""
+    get_settings().operator_password = "ml-operator-password"
+    get_settings().operator_session_secret = "ml-operator-secret"
+    response = client.post("/api/auth/login", json={"password": "ml-operator-password"})
+    assert response.status_code == 200, response.text
+
+
+def _org_headers(factory) -> dict:
+    with factory() as db:
+        org = _ensure_org(db)
+        seed_membership(db, org, "owner", user_id=USER_A)
+        return auth_headers(USER_A, str(org.id))
+
+
+def test_feedback_to_evaluation_linkage_and_insufficient_state(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as db:
         prediction_ids = _seed_feedback_machine(db)
-    client = _client(factory)
+    client = _client(factory, monkeypatch)
+    headers = _org_headers(factory)
+    _login_operator(client)
     try:
         empty = client.get("/api/model-evaluation").json()
         assert empty["evaluated"] is False
@@ -187,7 +219,7 @@ def test_feedback_to_evaluation_linkage_and_insufficient_state():
              "severity": "Info", "outcome": "Not Confirmed", "prediction_correct": True},
         ]
         for payload in payloads:
-            assert client.post("/api/feedback", json=payload).status_code == 201
+            assert client.post("/api/feedback", json=payload, headers=headers).status_code == 201
         evaluation = client.get("/api/model-evaluation").json()
         assert evaluation["ground_truth_count"] == 2
         assert evaluation["evaluated"] is True
@@ -198,11 +230,14 @@ def test_feedback_to_evaluation_linkage_and_insufficient_state():
         refused = client.post("/api/train-model", json={}).json()
         assert refused["success"] is False
         assert refused["refusal"] == "insufficient_labeled_data"
-        status = client.get("/api/model-status").json()
+        # Model status is organization-scoped, so it needs a user context.
+        status = client.get("/api/model-status", headers=headers).json()
         assert status["trained"] is False
         assert status["source"] == "prototype"
         assert "confidence" not in status and "remaining_life_days" not in status
     finally:
+        get_settings().operator_password = ""
+        get_settings().operator_session_secret = ""
         app.dependency_overrides.pop(get_db, None)
 
 
@@ -213,13 +248,37 @@ def test_train_model_reports_refusal_without_artifacts(tmp_path, monkeypatch):
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as db:
         _seed_feedback_machine(db, "M-THIN")
-    client = _client(factory)
+    client = _client(factory, monkeypatch)
+    _login_operator(client)
     try:
         body = client.post("/api/train-model", json={"dataset_version": "feedback-thin"}).json()
         assert body["success"] is False
         assert body["refusal"] == "insufficient_labeled_data"
         assert list(tmp_path.iterdir()) == []
     finally:
+        get_settings().operator_password = ""
+        get_settings().operator_session_secret = ""
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_train_model_requires_operator_session(monkeypatch):
+    """Tenant users must never be able to trigger platform model training."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as db:
+        _seed_feedback_machine(db)
+    client = _client(factory, monkeypatch)
+    headers = _org_headers(factory)
+    # Configure the operator gate (but never log in) so the denial is 401, not 503.
+    get_settings().operator_password = "ml-operator-password"
+    get_settings().operator_session_secret = "ml-operator-secret"
+    try:
+        assert client.post("/api/train-model", json={}, headers=headers).status_code == 401
+        assert client.get("/api/model-evaluation", headers=headers).status_code == 401
+    finally:
+        get_settings().operator_password = ""
+        get_settings().operator_session_secret = ""
         app.dependency_overrides.pop(get_db, None)
 
 

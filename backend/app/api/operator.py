@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.core.auth import require_operator_session
+from backend.app.core.tenant import require_operator_organization
 from backend.app.db.database import get_db
 from backend.app.schemas.sensor import (
     MachineCreate,
@@ -56,9 +57,12 @@ _AUTH = Depends(require_operator_session)
 )
 def operator_create_machine(
     data: MachineCreate,
+    organization=Depends(require_operator_organization),
     db: Session = Depends(get_db),
 ):
-    return create_machine(data, db)
+    # Platform operators act across organizations, but must name the target
+    # explicitly; the value is validated against the organizations table.
+    return create_machine(data, db, organization.id)
 
 
 # ---------------------------------------------------------------------------

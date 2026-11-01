@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from backend.app.core.tenant import OrganizationContext, require_org_member
 from backend.app.db.database import get_db
 from backend.app.db.models import Alert, Machine, Prediction, SensorReading
 from backend.app.services.ai_provider import AIPredictorError, get_predictor
@@ -50,6 +51,7 @@ class AssistantChatResponse(BaseModel):
 )
 def chat_with_assistant(
     payload: AssistantChatRequest,
+    ctx: OrganizationContext = Depends(require_org_member),
     db: Session = Depends(get_db),
 ) -> AssistantChatResponse:
     """
@@ -67,7 +69,20 @@ def chat_with_assistant(
     machine_context_lines.append(f"Current System Time: {now_local_str} ({now_utc.isoformat()})")
 
     if machine_id:
-        machine = db.query(Machine).filter(Machine.machine_id == machine_id).first()
+        machine = (
+            db.query(Machine)
+            .filter(
+                Machine.organization_id == ctx.organization_id,
+                Machine.machine_id == machine_id,
+            )
+            .first()
+        )
+        if machine is None:
+            # Uniform denial: a machine in another organization is invisible.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Machine '{machine_id}' was not found.",
+            )
         if machine:
             machine_context_lines.append(
                 f"Machine: {machine.machine_id} ({machine.name or 'Industrial Unit'})\n"
@@ -79,7 +94,10 @@ def chat_with_assistant(
             # Latest authentic sensor reading
             latest_reading = (
                 db.query(SensorReading)
-                .filter(SensorReading.machine_id == machine_id)
+                .filter(
+                    SensorReading.organization_id == ctx.organization_id,
+                    SensorReading.machine_id == machine_id,
+                )
                 .order_by(desc(SensorReading.timestamp), desc(SensorReading.id))
                 .first()
             )
@@ -97,7 +115,11 @@ def chat_with_assistant(
             # Active alerts
             active_alerts = (
                 db.query(Alert)
-                .filter(Alert.machine_id == machine_id, Alert.status == "ACTIVE")
+                .filter(
+                    Alert.organization_id == ctx.organization_id,
+                    Alert.machine_id == machine_id,
+                    Alert.status == "ACTIVE",
+                )
                 .order_by(desc(Alert.created_at))
                 .limit(3)
                 .all()

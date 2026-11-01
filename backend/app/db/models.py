@@ -19,13 +19,13 @@ for the existing ``Machine.devices`` / ``Machine.sensor_readings`` /
 ``Device.sensor_readings`` relationships. The single-column relationships stay
 unambiguous, and the database enforces the cross-tenant rules.
 
-Transitional default (removed in Phase 3)
------------------------------------------
-``organization_id`` defaults to ``LEGACY_ORGANIZATION_ID`` so every existing
-write path (ESP32 ingestion, operator writes, simulation config creation, the
-prediction pipeline) keeps working before the API derives an organization from
-a verified membership. Phase 3 will remove this default and require an explicit
-organization context. No user is granted legacy membership automatically.
+Organization ownership (Phase 3)
+-------------------------------
+There is NO default organization. Every tenant-owned write supplies
+``organization_id`` from verified server-side context (membership for users,
+registered device for telemetry, resolved machine for operator writes). The
+database rejects rows without an owner. No user is granted legacy membership
+automatically.
 
 Schema drift note
 -----------------
@@ -144,11 +144,11 @@ class Machine(Base):
     __tablename__ = "machines"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    # Transitional default: see module docstring (removed in Phase 3).
+    # Required tenant owner. No default: every write must supply the verified
+    # organization context (Phase 3 removed the transitional legacy default).
     organization_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
-        default=LEGACY_ORGANIZATION_ID,
         nullable=False,
         index=True,
     )
@@ -193,7 +193,6 @@ class Device(Base):
     organization_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
-        default=LEGACY_ORGANIZATION_ID,
         nullable=False,
         index=True,
     )
@@ -234,7 +233,6 @@ class SensorReading(Base):
     organization_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
-        default=LEGACY_ORGANIZATION_ID,
         nullable=False,
         index=True,
     )
@@ -282,7 +280,6 @@ class MaintenanceRecord(Base):
     organization_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
-        default=LEGACY_ORGANIZATION_ID,
         nullable=False,
         index=True,
     )
@@ -327,7 +324,6 @@ class Prediction(Base):
     organization_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
-        default=LEGACY_ORGANIZATION_ID,
         nullable=False,
         index=True,
     )
@@ -376,7 +372,6 @@ class Alert(Base):
     organization_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
-        default=LEGACY_ORGANIZATION_ID,
         nullable=False,
         index=True,
     )
@@ -414,7 +409,6 @@ class FeedbackRecord(Base):
     organization_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
-        default=LEGACY_ORGANIZATION_ID,
         nullable=False,
         index=True,
     )
@@ -476,7 +470,6 @@ class MachineSimulationConfig(Base):
     organization_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
-        default=LEGACY_ORGANIZATION_ID,
         nullable=False,
         index=True,
     )

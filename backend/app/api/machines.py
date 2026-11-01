@@ -1,16 +1,30 @@
 """
 Predict IQ - Machine Assets & Device Management API Endpoints (PostgreSQL)
-Handles industrial machine registration, ESP32 device tracking, device heartbeats, and real asset status.
+
+Phase 3 (multi-tenant): every query is scoped to the caller's verified
+organization. Reads require any active membership; machine/device
+administration requires owner or admin. Cross-organization identifiers return a
+uniform 404 so existence is never disclosed.
+
+Device heartbeat stays on the existing API-key gate: the registered device row
+is the authority for its organization, and unknown devices are rejected rather
+than auto-provisioned.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from datetime import datetime, timezone
 from typing import List, Optional
-from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
 
 from backend.app.core.auth import require_api_key
 from backend.app.core.config import get_settings
+from backend.app.core.tenant import (
+    OrganizationContext,
+    require_org_admin,
+    require_org_member,
+)
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, Device, SensorReading
 from backend.app.schemas.sensor import (
@@ -22,12 +36,13 @@ from backend.app.schemas.sensor import (
     DeviceHeartbeatInput,
     DeviceHeartbeatResponse,
     DeviceStatusDetailResponse,
-    SensorReadingResponse
+    SensorReadingResponse,
 )
 
 router = APIRouter(tags=["Machines & Devices (ESP32)"])
 
 DEVICE_TIMEOUT_SECONDS = get_settings().device_timeout_seconds
+
 
 def compute_device_status(
     last_seen: Optional[datetime],
@@ -42,129 +57,111 @@ def compute_device_status(
         current_time = current_time.replace(tzinfo=timezone.utc)
     return "ONLINE" if (current_time - last_seen).total_seconds() <= DEVICE_TIMEOUT_SECONDS else "OFFLINE"
 
-# ============================================================================
-# 1. MACHINE ASSET ENDPOINTS
-# ============================================================================
-@router.get("/machines", response_model=List[MachineResponse], summary="List all registered industrial machines")
-def list_machines(db: Session = Depends(get_db)):
-    """
-    Returns all machine assets from PostgreSQL along with registered devices and latest real telemetry.
-    """
-    machines = db.query(Machine).order_by(Machine.created_at.desc()).all()
-    results = []
-    
-    for m in machines:
-        latest_reading = (
-            db.query(SensorReading)
-            .filter(SensorReading.machine_id == m.machine_id)
-            .order_by(desc(SensorReading.timestamp))
-            .first()
-        )
-        
-        devices = db.query(Device).filter(Device.machine_id == m.machine_id).all()
-        dev_responses = [
-            DeviceResponse(
-                id=d.id,
-                device_id=d.device_id,
-                machine_id=d.machine_id,
-                device_type=d.device_type,
-                firmware_version=d.firmware_version,
-                status=compute_device_status(d.last_seen),
-                last_seen=d.last_seen,
-                source=d.source,
-                created_at=d.created_at
-            )
-            for d in devices
-        ]
 
-        results.append(
-            MachineResponse(
-                id=m.id,
-                machine_id=m.machine_id,
-                name=m.name,
-                type=m.type,
-                location=m.location,
-                status=m.status,
-                specifications=MachineSpecifications(
-                    rated_rpm=m.rated_rpm,
-                    rated_current=m.rated_current,
-                    max_temp=m.max_temp,
-                    max_vibration=m.max_vibration,
-                ),
-                created_at=m.created_at,
-                devices=dev_responses,
-                latest_reading=SensorReadingResponse.from_orm(latest_reading) if latest_reading else None
-            )
-        )
-    return results
+def _device_response(device: Device) -> DeviceResponse:
+    return DeviceResponse(
+        id=device.id,
+        device_id=device.device_id,
+        machine_id=device.machine_id,
+        device_type=device.device_type,
+        firmware_version=device.firmware_version,
+        status=compute_device_status(device.last_seen),
+        last_seen=device.last_seen,
+        source=device.source,
+        created_at=device.created_at,
+    )
 
-@router.get("/machines/{machine_id}", response_model=MachineResponse, summary="Get details for a specific machine asset")
-def get_machine(machine_id: str, db: Session = Depends(get_db)):
-    """
-    Retrieves complete profile, assigned devices, and latest real reading for a single machine from PostgreSQL.
-    """
-    m = db.query(Machine).filter(Machine.machine_id == machine_id).first()
-    if not m:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Machine with ID '{machine_id}' was not found in PostgreSQL registry."
-        )
 
+def _machine_response(machine: Machine, db: Session, organization_id) -> MachineResponse:
     latest_reading = (
         db.query(SensorReading)
-        .filter(SensorReading.machine_id == machine_id)
+        .filter(
+            SensorReading.organization_id == organization_id,
+            SensorReading.machine_id == machine.machine_id,
+        )
         .order_by(desc(SensorReading.timestamp))
         .first()
     )
-
-    devices = db.query(Device).filter(Device.machine_id == machine_id).all()
-    dev_responses = [
-        DeviceResponse(
-            id=d.id,
-            device_id=d.device_id,
-            machine_id=d.machine_id,
-            device_type=d.device_type,
-            firmware_version=d.firmware_version,
-            status=compute_device_status(d.last_seen),
-            last_seen=d.last_seen,
-            source=d.source,
-            created_at=d.created_at
+    devices = (
+        db.query(Device)
+        .filter(
+            Device.organization_id == organization_id,
+            Device.machine_id == machine.machine_id,
         )
-        for d in devices
-    ]
-
+        .all()
+    )
     return MachineResponse(
-        id=m.id,
-        machine_id=m.machine_id,
-        name=m.name,
-        type=m.type,
-        location=m.location,
-        status=m.status,
+        id=machine.id,
+        machine_id=machine.machine_id,
+        name=machine.name,
+        type=machine.type,
+        location=machine.location,
+        status=machine.status,
         specifications=MachineSpecifications(
-            rated_rpm=m.rated_rpm,
-            rated_current=m.rated_current,
-            max_temp=m.max_temp,
-            max_vibration=m.max_vibration,
+            rated_rpm=machine.rated_rpm,
+            rated_current=machine.rated_current,
+            max_temp=machine.max_temp,
+            max_vibration=machine.max_vibration,
         ),
-        created_at=m.created_at,
-        devices=dev_responses,
-        latest_reading=SensorReadingResponse.from_orm(latest_reading) if latest_reading else None
+        created_at=machine.created_at,
+        devices=[_device_response(d) for d in devices],
+        latest_reading=SensorReadingResponse.from_orm(latest_reading) if latest_reading else None,
     )
 
-@router.post("/machines", response_model=MachineResponse, status_code=status.HTTP_201_CREATED, summary="Register a new machine asset",
-             dependencies=[Depends(require_api_key)])
-def create_machine(data: MachineCreate, db: Session = Depends(get_db)):
-    """
-    Registers a new industrial machine asset in PostgreSQL.
-    """
+
+# ============================================================================
+# 1. MACHINE ASSET ENDPOINTS (organization-scoped reads, admin writes)
+# ============================================================================
+@router.get("/machines", response_model=List[MachineResponse],
+            summary="List the organization's industrial machines")
+def list_machines(
+    ctx: OrganizationContext = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    machines = (
+        db.query(Machine)
+        .filter(Machine.organization_id == ctx.organization_id)
+        .order_by(Machine.created_at.desc())
+        .all()
+    )
+    return [_machine_response(m, db, ctx.organization_id) for m in machines]
+
+
+@router.get("/machines/{machine_id}", response_model=MachineResponse,
+            summary="Get a machine asset in the caller's organization")
+def get_machine(
+    machine_id: str,
+    ctx: OrganizationContext = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    machine = (
+        db.query(Machine)
+        .filter(
+            Machine.organization_id == ctx.organization_id,
+            Machine.machine_id == machine_id,
+        )
+        .first()
+    )
+    if not machine:
+        # Uniform non-disclosing denial for missing AND foreign machines.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Machine '{machine_id}' was not found.",
+        )
+    return _machine_response(machine, db, ctx.organization_id)
+
+
+def create_machine(data: MachineCreate, db: Session, organization_id) -> MachineResponse:
+    """Create a machine inside an explicitly resolved organization."""
     existing = db.query(Machine).filter(Machine.machine_id == data.machine_id).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Machine ID '{data.machine_id}' is already registered."
+            detail=f"Machine ID '{data.machine_id}' is already registered.",
         )
 
     new_machine = Machine(
+        organization_id=organization_id,
         machine_id=data.machine_id,
         name=data.name,
         type=data.type,
@@ -174,7 +171,7 @@ def create_machine(data: MachineCreate, db: Session = Depends(get_db)):
         rated_current=data.specifications.rated_current if data.specifications else None,
         max_temp=data.specifications.max_temp if data.specifications else None,
         max_vibration=data.specifications.max_vibration if data.specifications else None,
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(timezone.utc),
     )
     db.add(new_machine)
     db.commit()
@@ -195,138 +192,157 @@ def create_machine(data: MachineCreate, db: Session = Depends(get_db)):
         ),
         created_at=new_machine.created_at,
         devices=[],
-        latest_reading=None
+        latest_reading=None,
     )
+
+
+@router.post("/machines", response_model=MachineResponse,
+             status_code=status.HTTP_201_CREATED,
+             summary="Register a machine in the caller's organization (owner/admin)")
+def register_machine(
+    data: MachineCreate,
+    ctx: OrganizationContext = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    # organization_id comes from the verified membership; any value supplied in
+    # the request body is ignored by the schema and never consulted here.
+    return create_machine(data, db, ctx.organization_id)
+
 
 # ============================================================================
 # 2. DEVICE (ESP32) ENDPOINTS
 # ============================================================================
-@router.get("/devices", response_model=List[DeviceResponse], summary="List all registered ESP32 IoT devices")
-def list_devices(db: Session = Depends(get_db)):
-    """
-    Returns all registered ESP32 hardware devices and computes connection status based on last_seen.
-    """
-    devices = db.query(Device).all()
-    return [
-        DeviceResponse(
-            id=d.id,
-            device_id=d.device_id,
-            machine_id=d.machine_id,
-            device_type=d.device_type,
-            firmware_version=d.firmware_version,
-            status=compute_device_status(d.last_seen),
-            last_seen=d.last_seen,
-            source=d.source,
-            created_at=d.created_at
-        )
-        for d in devices
-    ]
+@router.get("/devices", response_model=List[DeviceResponse],
+            summary="List the organization's registered ESP32 devices")
+def list_devices(
+    ctx: OrganizationContext = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    devices = (
+        db.query(Device)
+        .filter(Device.organization_id == ctx.organization_id)
+        .all()
+    )
+    return [_device_response(d) for d in devices]
 
-@router.post("/devices", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED, summary="Register an ESP32 hardware device to a machine",
-             dependencies=[Depends(require_api_key)])
-def register_device(payload: DeviceCreate, db: Session = Depends(get_db)):
-    """
-    Registers an ESP32 IoT node to a target machine in PostgreSQL.
-    """
-    machine = db.query(Machine).filter(Machine.machine_id == payload.machine_id).first()
+
+def register_device(payload: DeviceCreate, db: Session, organization_id=None) -> DeviceResponse:
+    """Register a device; the machine must live in the same organization."""
+    query = db.query(Machine).filter(Machine.machine_id == payload.machine_id)
+    if organization_id is not None:
+        query = query.filter(Machine.organization_id == organization_id)
+    machine = query.first()
     if not machine:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Target machine '{payload.machine_id}' does not exist in registry."
+            detail=f"Target machine '{payload.machine_id}' was not found.",
         )
 
     existing_dev = db.query(Device).filter(Device.device_id == payload.device_id).first()
     if existing_dev:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Device ID '{payload.device_id}' is already registered to machine '{existing_dev.machine_id}'."
+            detail=f"Device ID '{payload.device_id}' is already registered.",
         )
 
     new_device = Device(
+        organization_id=machine.organization_id,
         device_id=payload.device_id,
         machine_id=payload.machine_id,
         device_type=payload.device_type or "ESP32",
         firmware_version=payload.firmware_version or "1.0.0",
         status="OFFLINE",
         last_seen=None,
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(timezone.utc),
     )
     db.add(new_device)
     db.commit()
     db.refresh(new_device)
+    return _device_response(new_device)
 
-    return DeviceResponse(
-        id=new_device.id,
-        device_id=new_device.device_id,
-        machine_id=new_device.machine_id,
-        device_type=new_device.device_type,
-        firmware_version=new_device.firmware_version,
-        status="OFFLINE",
-        last_seen=None,
-        source="REAL_HARDWARE",
-        created_at=new_device.created_at
-    )
 
-@router.get("/devices/{device_id}", response_model=DeviceResponse, summary="Get details for a specific device")
-def get_device(device_id: str, db: Session = Depends(get_db)):
-    """
-    Returns single ESP32 device metadata from PostgreSQL.
-    """
-    device = db.query(Device).filter(Device.device_id == device_id).first()
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Device '{device_id}' not found."
+@router.post("/devices", response_model=DeviceResponse,
+             status_code=status.HTTP_201_CREATED,
+             summary="Register an ESP32 device to a machine (owner/admin)")
+def register_device_endpoint(
+    payload: DeviceCreate,
+    ctx: OrganizationContext = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    return register_device(payload, db, ctx.organization_id)
+
+
+@router.get("/devices/{device_id}", response_model=DeviceResponse,
+            summary="Get a device in the caller's organization")
+def get_device(
+    device_id: str,
+    ctx: OrganizationContext = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    device = (
+        db.query(Device)
+        .filter(
+            Device.organization_id == ctx.organization_id,
+            Device.device_id == device_id,
         )
-
-    return DeviceResponse(
-        id=device.id,
-        device_id=device.device_id,
-        machine_id=device.machine_id,
-        device_type=device.device_type,
-        firmware_version=device.firmware_version,
-        status=compute_device_status(device.last_seen),
-        last_seen=device.last_seen,
-        created_at=device.created_at
+        .first()
     )
-
-@router.get("/devices/{device_id}/status", response_model=DeviceStatusDetailResponse, summary="Get real connection and sensor availability status for an ESP32")
-def get_device_status(device_id: str, db: Session = Depends(get_db)):
-    """
-    Returns real-time connection status (CONNECTED/OFFLINE), last_seen timestamp, and latest telemetry snapshot.
-    """
-    device = db.query(Device).filter(Device.device_id == device_id).first()
     if not device:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Device '{device_id}' not found."
+            detail=f"Device '{device_id}' not found.",
+        )
+    return _device_response(device)
+
+
+@router.get("/devices/{device_id}/status", response_model=DeviceStatusDetailResponse,
+            summary="Get connection and sensor availability for a device")
+def get_device_status(
+    device_id: str,
+    ctx: OrganizationContext = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    device = (
+        db.query(Device)
+        .filter(
+            Device.organization_id == ctx.organization_id,
+            Device.device_id == device_id,
+        )
+        .first()
+    )
+    if not device:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Device '{device_id}' not found.",
         )
 
     latest_reading = (
         db.query(SensorReading)
-        .filter(SensorReading.device_id == device_id)
+        .filter(
+            SensorReading.organization_id == ctx.organization_id,
+            SensorReading.device_id == device_id,
+        )
         .order_by(desc(SensorReading.timestamp))
         .first()
     )
-
-    computed_status = compute_device_status(device.last_seen)
 
     return DeviceStatusDetailResponse(
         device_id=device.device_id,
         machine_id=device.machine_id,
         device_type=device.device_type,
         firmware_version=device.firmware_version,
-        status=computed_status,
+        status=compute_device_status(device.last_seen),
         last_seen=device.last_seen,
         temperature_status="CONNECTED" if latest_reading and latest_reading.temperature is not None else "NOT_CONFIGURED",
         vibration_status="CONNECTED" if latest_reading and latest_reading.vibration is not None else "NOT_CONFIGURED",
         current_status="CONNECTED" if latest_reading and latest_reading.current is not None else "NOT_CONFIGURED",
         rpm_status="CONNECTED" if latest_reading and latest_reading.rpm is not None else "NOT_CONFIGURED",
-        last_reading=SensorReadingResponse.from_orm(latest_reading) if latest_reading else None
+        last_reading=SensorReadingResponse.from_orm(latest_reading) if latest_reading else None,
     )
 
+
 # ============================================================================
-# 3. ESP32 DEVICE HEARTBEAT ENDPOINT
+# 3. ESP32 DEVICE HEARTBEAT (device API key only)
 # ============================================================================
 @router.post(
     "/devices/heartbeat",
@@ -335,53 +351,42 @@ def get_device_status(device_id: str, db: Session = Depends(get_db)):
     dependencies=[Depends(require_api_key)],
 )
 def record_device_heartbeat(payload: DeviceHeartbeatInput, db: Session = Depends(get_db)):
-    """
-    Receives periodic ping from an active ESP32.
-    Updates device.last_seen in PostgreSQL so dashboard displays real CONNECTED state.
+    """Device-authenticated heartbeat for an ALREADY REGISTERED device.
+
+    Unknown device IDs are rejected (404) instead of being auto-provisioned:
+    silent provisioning would let any holder of the shared device key create
+    rows inside an arbitrary tenant. The device row supplies the organization.
     """
     now = payload.timestamp or datetime.now(timezone.utc)
 
+    device = db.query(Device).filter(Device.device_id == payload.device_id).first()
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Device '{payload.device_id}' is not registered. Provision it before sending telemetry.",
+        )
+
+    if device.machine_id != payload.machine_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Device is assigned to a different machine.",
+        )
+
+    machine = db.query(Machine).filter(Machine.machine_id == device.machine_id).first()
+    if machine is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device's machine no longer exists.",
+        )
+
     try:
-        machine = db.query(Machine).filter(Machine.machine_id == payload.machine_id).first()
-        if not machine:
-            machine = Machine(
-                machine_id=payload.machine_id,
-                name=f"Asset {payload.machine_id}",
-                type="Industrial Asset",
-                location="Plant Floor",
-                status="Healthy",
-                created_at=now
-            )
-            db.add(machine)
-            db.flush()
-
-        device = db.query(Device).filter(Device.device_id == payload.device_id).first()
-        if device and device.machine_id != payload.machine_id:
-            raise HTTPException(status_code=400, detail="Device is already assigned to another machine.")
-        if not device:
-            device = Device(
-                device_id=payload.device_id,
-                machine_id=payload.machine_id,
-                device_type=payload.device_type or "ESP32",
-                firmware_version=payload.firmware_version or "1.0.0",
-                status="ONLINE",
-                last_seen=now,
-                source=payload.source,
-                created_at=now
-            )
-            db.add(device)
-        else:
-            device.last_seen = now
-            device.status = "ONLINE"
-            device.source = payload.source
-            if payload.firmware_version:
-                device.firmware_version = payload.firmware_version
-
+        device.last_seen = now
+        device.status = "ONLINE"
+        device.source = payload.source
+        if payload.firmware_version:
+            device.firmware_version = payload.firmware_version
         db.commit()
         db.refresh(device)
-    except HTTPException:
-        db.rollback()
-        raise
     except Exception:
         db.rollback()
         raise HTTPException(status_code=503, detail="Heartbeat could not be stored in PostgreSQL.")
@@ -392,5 +397,5 @@ def record_device_heartbeat(payload: DeviceHeartbeatInput, db: Session = Depends
         device_id=device.device_id,
         machine_id=device.machine_id,
         status="ONLINE",
-        last_seen=now
+        last_seen=now,
     )

@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.api.machines import compute_device_status
 from backend.app.db.database import Base
-from backend.app.db.models import Machine
+from backend.app.db.models import Machine, Organization
 
 
 ROOT = Path(__file__).parents[1]
@@ -34,7 +35,11 @@ def test_machine_specifications_round_trip_with_timezone_aware_timestamp() -> No
     Base.metadata.create_all(engine)
 
     with Session(engine) as session:
+        org = Organization(id=uuid.uuid4(), name="Phase 1 Org", slug="phase1-org")
+        session.add(org)
+        session.flush()
         machine = Machine(
+            organization_id=org.id,
             machine_id="M-PHASE1",
             name="Phase 1 Pump",
             type="Centrifugal Pump",
