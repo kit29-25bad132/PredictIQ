@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   LayoutDashboard,
+  Box,
   Cpu,
   LineChart,
   Activity,
@@ -12,11 +13,12 @@ import {
   Radio,
   ShieldCheck,
   ClipboardCheck,
-  LogOut
+  Globe,
 } from 'lucide-react';
 
 export type NavTab = 
   | 'dashboard'
+  | '3d-view'
   | 'machines'
   | 'machine-details'
   | 'monitoring'
@@ -35,7 +37,7 @@ interface SidebarProps {
   backendOnline: boolean;
   isMobileOpen: boolean;
   onCloseMobile: () => void;
-  onLogout: () => void;
+  onNavigateHome?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -46,7 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   backendOnline,
   isMobileOpen,
   onCloseMobile,
-  onLogout,
+  onNavigateHome,
 }) => {
   const navItems = [
     {
@@ -54,6 +56,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Dashboard',
       icon: LayoutDashboard,
       badge: null,
+    },
+    {
+      id: '3d-view' as NavTab,
+      label: '3D Machine View',
+      icon: Box,
+      badge: '3D',
+      badgeColor: 'purple',
     },
     {
       id: 'machines' as NavTab,
@@ -146,13 +155,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             </div>
             <p className="text-[10px] font-mono tracking-tight text-slate-400">
-              Physics-Rule Prototype v1
+              Industrial IoT Platform
             </p>
           </div>
         </div>
 
         {/* Navigation List */}
-        <nav className="mt-6 flex-1 space-y-1.5 overflow-y-auto">
+        <nav className="mt-4 flex-1 space-y-1 overflow-y-auto pr-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -200,34 +209,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </nav>
 
-        {/* Bottom System Health Footer — derived from real backend reachability */}
-        <div className="mt-auto border-t border-slate-800/80 pt-4 px-2">
-          <div className="rounded-xl border border-slate-800/80 bg-slate-900/60 p-3">
+        {/* Bottom System Health Footer */}
+        <div className="mt-auto border-t border-slate-800/80 pt-3 px-1 space-y-2">
+          {onNavigateHome && (
+            <button
+              onClick={onNavigateHome}
+              className="flex w-full items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition-all"
+            >
+              <Globe className="h-4 w-4 text-cyan-400" />
+              <span>Public Landing Page</span>
+            </button>
+          )}
+
+          <div className="rounded-xl border border-slate-800/80 bg-slate-900/60 p-2.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="flex items-center gap-1.5 text-slate-300 font-medium">
-                <ShieldCheck className={`h-4 w-4 ${backendOnline ? 'text-emerald-400' : 'text-rose-400'}`} /> API Gateway
+              <span className="flex items-center gap-1.5 text-slate-300 font-medium text-[11px]">
+                <ShieldCheck className={`h-3.5 w-3.5 ${backendOnline ? 'text-emerald-400' : 'text-rose-400'}`} /> FastAPI Gateway
               </span>
-              <span className={`flex items-center gap-1 font-mono text-[11px] ${backendOnline ? 'text-emerald-400' : 'text-rose-400'}`}>
+              <span className={`flex items-center gap-1 font-mono text-[10px] ${backendOnline ? 'text-emerald-400' : 'text-rose-400'}`}>
                 <span className={`h-1.5 w-1.5 rounded-full ${backendOnline ? 'bg-emerald-400 animate-ping' : 'bg-rose-400'}`} />
                 {backendOnline ? 'ONLINE' : 'OFFLINE'}
               </span>
             </div>
-            <div className="mt-2 text-[11px] text-slate-400 font-mono flex justify-between">
-              <span>Backend:</span>
-              <span className="text-slate-300">FastAPI / PostgreSQL</span>
-            </div>
-            <div className="mt-1 text-[11px] text-slate-400 font-mono flex justify-between">
-              <span>Engine:</span>
-              <span className="text-cyan-400">Prototype physics-based</span>
-            </div>
           </div>
-          <button
-            onClick={onLogout}
-            className="mt-3 flex w-full items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-xs font-medium text-slate-400 hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-300 transition-all"
-          >
-            <LogOut className="h-4 w-4" />
-            <span>Logout</span>
-          </button>
         </div>
       </aside>
     </>

@@ -30,7 +30,8 @@ import {
   Plus,
   Radio,
   Database,
-  Info
+  Info,
+  Box,
 } from 'lucide-react';
 
 interface MachineDetailsPageProps {
@@ -39,6 +40,7 @@ interface MachineDetailsPageProps {
   onSelectMachine: (id: string) => void;
   onBackToDashboard: () => void;
   onOpenManualModal: (machineId: string) => void;
+  onNavigate3DView?: (machineId: string) => void;
 }
 
 export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
@@ -47,6 +49,7 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
   onSelectMachine,
   onBackToDashboard,
   onOpenManualModal,
+  onNavigate3DView,
 }) => {
   const [machine, setMachine] = useState<Machine | null>(null);
   const [sensorHistory, setSensorHistory] = useState<SensorReading[]>([]);
@@ -150,6 +153,16 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
 
         {/* Machine Switcher & Actions */}
         <div className="flex flex-wrap items-center gap-2">
+          {onNavigate3DView && (
+            <button
+              onClick={() => onNavigate3DView(machineId)}
+              className="flex items-center gap-1.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/40 px-3 py-2 text-xs font-bold hover:bg-purple-500/30 transition-all shadow-md"
+            >
+              <Box className="h-3.5 w-3.5 text-purple-400" />
+              <span>3D Digital Twin</span>
+            </button>
+          )}
+
           <select
             id="select-active-machine-inspect"
             value={machineId}

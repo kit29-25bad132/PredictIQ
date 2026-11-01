@@ -7,11 +7,11 @@
 #define WIFI_SSID "Wokwi-GUEST"
 #define WIFI_PASSWORD ""
 
-// Local Wokwi transport: plain HTTP to the local gateway adapter on the
-// developer machine. The gateway forwards to Render over HTTPS.
-// host.wokwi.internal resolves to the host machine from within Wokwi simulations.
-// GATEWAY_TOKEN must be supplied at build time (platformio.ini).
-#define API_BASE_URL "http://host.wokwi.internal:9000"
+// Local Wokwi transport: direct HTTP to the currently deployed local FastAPI
+// backend running on the developer machine. host.wokwi.internal resolves to the
+// host OS from within the Wokwi simulation. If you are using the gateway path
+// instead, override this to the gateway host/port and set GATEWAY_TOKEN.
+#define API_BASE_URL "http://host.wokwi.internal:8000"
 //
 // TLS trust anchor for API_BASE_URL (PUBLIC certificate - not a secret):
 // GlobalSign Root CA (RSA-2048, self-signed, 1998-2028), the trust anchor of

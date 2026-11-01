@@ -15,12 +15,32 @@ import warnings
 
 from typing import Any, Dict, List, Optional
 
-from ml.train import (
-    MIN_LABELED_SAMPLES,
-    collect_labeled_samples,
-    get_registry_status,
-    train_governed_model,
-)
+try:
+    from ml.train import (
+        MIN_LABELED_SAMPLES,
+        collect_labeled_samples,
+        get_registry_status,
+        train_governed_model,
+    )
+except Exception:  # pragma: no cover - environment may block sklearn imports
+    MIN_LABELED_SAMPLES = 10
+
+    def collect_labeled_samples(rows: List[Dict[str, Any]]):
+        return type("CollectionReport", (), {"samples": []})()
+
+    def get_registry_status() -> Dict[str, Any]:
+        return {
+            "trained": False,
+            "status": "unavailable",
+            "message": "Machine learning dependencies are unavailable in this environment.",
+        }
+
+    def train_governed_model(*args, **kwargs):
+        return {
+            "success": False,
+            "refusal": "ml_unavailable",
+            "message": "Machine learning dependencies are unavailable in this environment.",
+        }
 
 MODEL_DIR = None
 MODEL_PATH = None

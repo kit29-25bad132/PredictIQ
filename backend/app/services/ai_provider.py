@@ -257,6 +257,14 @@ class GeminiProvider:
         """Stable identifier persisted on predictions, e.g. 'gemini:gemini-3.6-flash'."""
         return f"gemini:{self.model}"
 
+    FALLBACK_MODELS = [
+        "gemini-3.6-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3.7-flash",
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest",
+    ]
+
     def analyze_telemetry(self, telemetry: TelemetryInput) -> AIAssessment:
         if not self.api_key:
             # Fail closed: never fabricate a result when unconfigured.
@@ -270,20 +278,89 @@ class GeminiProvider:
                 # valid JSON constrained to the assessment schema.
                 "responseMimeType": "application/json",
                 "responseSchema": ASSESSMENT_RESPONSE_SCHEMA,
-                # Documented thinking/limit tuning for 3.x Flash: enough budget
-                # for thinking plus the full JSON assessment, with an explicit
-                # low thinking_level instead of a small token cap. The sampling
-                # parameters temperature/topP/topK are deprecated as of
-                # 2026-07-21 and deliberately omitted; validate_assessment()
-                # pins output semantics.
                 "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
                 "thinkingConfig": {"thinkingLevel": GEMINI_THINKING_LEVEL},
             },
         }
-        url = f"{self.api_base_url}/{self.model}:generateContent"
-        raw_text = self._post_json(url, request_body)
-        assessment = validate_assessment(self._extract_assessment(raw_text))
-        return assessment
+
+        # Try active model then fallbacks if 503/404 occurs
+        models_to_try = [self.model] + [m for m in self.FALLBACK_MODELS if m != self.model]
+        last_error: Optional[Exception] = None
+
+        for candidate_model in models_to_try:
+            url = f"{self.api_base_url}/{candidate_model}:generateContent"
+            try:
+                raw_text = self._post_json(url, request_body)
+                assessment = validate_assessment(self._extract_assessment(raw_text))
+                return assessment
+            except AIPredictorError as exc:
+                last_error = exc
+                if "503" in str(exc) or "404" in str(exc):
+                    logger.info("Model %s unavailable, trying fallback...", candidate_model)
+                    continue
+                raise
+
+        if last_error:
+            raise last_error
+        raise AIPredictorError("No Gemini model succeeded.")
+
+    def generate_chat_reply(
+        self,
+        message: str,
+        history: Optional[list] = None,
+        system_instruction: Optional[str] = None,
+    ) -> str:
+        """Generate interactive conversational maintenance response from Gemini."""
+        if not self.api_key:
+            raise AIPredictorError("GEMINI_API_KEY is not configured; external AI assistant is unavailable.")
+
+        contents = []
+        if history:
+            for item in history:
+                role = "user" if item.get("sender") == "user" or item.get("role") == "user" else "model"
+                text = item.get("text") or item.get("content") or ""
+                if text.strip():
+                    contents.append({"role": role, "parts": [{"text": text.strip()}]})
+
+        # Append current user message
+        contents.append({"role": "user", "parts": [{"text": message.strip()}]})
+
+        request_body: Dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {
+                "maxOutputTokens": 1024,
+            },
+        }
+        if system_instruction:
+            request_body["system_instruction"] = {
+                "parts": [{"text": system_instruction}]
+            }
+
+        models_to_try = [self.model] + [m for m in self.FALLBACK_MODELS if m != self.model]
+        last_error: Optional[Exception] = None
+
+        for candidate_model in models_to_try:
+            url = f"{self.api_base_url}/{candidate_model}:generateContent"
+            try:
+                raw_text = self._post_json(url, request_body)
+                envelope = json.loads(raw_text)
+                if isinstance(envelope, dict) and envelope.get("error"):
+                    raise AIPredictorError(f"Gemini API error: {envelope['error'].get('message', 'unknown')}")
+                reply_text = envelope["candidates"][0]["content"]["parts"][0]["text"]
+                return reply_text.strip()
+            except AIPredictorError as exc:
+                last_error = exc
+                if "503" in str(exc) or "404" in str(exc):
+                    logger.info("Chat model %s unavailable, trying fallback...", candidate_model)
+                    continue
+                raise
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise AIPredictorError(f"Gemini chat failed: {last_error}") from last_error
+        raise AIPredictorError("No Gemini model succeeded.")
 
     # ------------------------------------------------------------------
     # Transport + response extraction
@@ -349,3 +426,4 @@ class GeminiProvider:
 def get_predictor() -> AIPredictor:
     """Factory used by the API layer (keeps endpoint code provider-agnostic)."""
     return GeminiProvider()
+

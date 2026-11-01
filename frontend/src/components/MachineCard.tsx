@@ -15,6 +15,11 @@ export const MachineCard: React.FC<MachineCardProps> = ({
 }) => {
   const reading = machine.latest_reading;
   const hasReading = reading !== undefined && reading !== null;
+  const sourceLabel = reading?.source === 'WOKWI'
+    ? 'WOKWI SIMULATION'
+    : reading?.source === 'REAL_HARDWARE'
+      ? 'REAL HARDWARE'
+      : 'NO READINGS';
 
   const temp = hasReading ? reading.temperature.toFixed(1) : '--';
   const vib = hasReading ? reading.vibration.toFixed(2) : '--';
@@ -147,7 +152,7 @@ export const MachineCard: React.FC<MachineCardProps> = ({
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-400 font-medium">Source:</span>
             <span className="font-mono text-[11px] text-cyan-400">
-              {reading?.source === 'WOKWI' ? 'WOKWI SIMULATION' : reading?.source || 'NO READINGS'}
+              {sourceLabel}
             </span>
           </div>
 

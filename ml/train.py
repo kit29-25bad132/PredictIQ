@@ -31,9 +31,33 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 import numpy as np
 import joblib
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
-from sklearn.model_selection import train_test_split
+
+try:
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
+    from sklearn.model_selection import train_test_split
+    SKLEARN_AVAILABLE = True
+except Exception as exc:  # pragma: no cover - platform policy / missing binary guard
+    RandomForestClassifier = None
+    accuracy_score = None
+    confusion_matrix = None
+    f1_score = None
+    precision_score = None
+    recall_score = None
+    train_test_split = None
+    SKLEARN_AVAILABLE = False
+    _SKLEARN_IMPORT_ERROR = exc
+else:
+    _SKLEARN_IMPORT_ERROR = None
+
+
+def _require_sklearn() -> None:
+    """Raise a clear error only when code actually tries to train/evaluate ML."""
+    if not SKLEARN_AVAILABLE:
+        raise RuntimeError(
+            "scikit-learn is unavailable in this environment; ML training/evaluation cannot run. "
+            f"Original import error: {_SKLEARN_IMPORT_ERROR}"
+        )
 
 # Default artifact location for governed production runs (ml/models/ is gitignored for *.joblib).
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")

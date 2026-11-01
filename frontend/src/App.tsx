@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Machine, FleetStats, FeedbackContext } from './types';
 import api from './services/api';
 import Sidebar, { NavTab } from './components/Sidebar';
 import Header from './components/Header';
+import HomePage from './pages/HomePage';
 import DashboardPage from './pages/DashboardPage';
 import MachinesPage from './pages/MachinesPage';
 import MachineDetailsPage from './pages/MachineDetailsPage';
+import Machine3DViewPage from './pages/Machine3DViewPage';
 import LiveMonitoringPage from './pages/LiveMonitoringPage';
 import PredictionsPage from './pages/PredictionsPage';
 import MaintenancePage from './pages/MaintenancePage';
@@ -15,14 +17,19 @@ import SensorDataPage from './pages/SensorDataPage';
 import SettingsPage from './pages/SettingsPage';
 import ManualSensorModal from './components/ManualSensorModal';
 import AddMachineModal from './components/AddMachineModal';
-import HomePage from './pages/HomePage';
-import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw, Lock } from 'lucide-react';
+import { AlarmProvider, useAlarm } from './context/AlarmContext';
+import { SimulationProvider } from './context/SimulationContext';
+import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 
-type AppRoute = 'home' | 'dashboard';
+type AppRoute = 'home' | 'workbench';
 
-export function App() {
+function MainAppContent() {
+  const { evaluateFleetTelemetry, isAlarmActive, isAudioMuted, muteAlarm } = useAlarm();
+
+  // Route State: 'home' | 'workbench'
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('home');
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+
   const [selectedMachineId, setSelectedMachineId] = useState<string>('');
   const [machines, setMachines] = useState<Machine[]>([]);
   const [fleetStats, setFleetStats] = useState<FleetStats>({
@@ -44,7 +51,7 @@ export function App() {
   const [modalTargetMachineId, setModalTargetMachineId] = useState<string | undefined>(undefined);
   const [isAddMachineModalOpen, setIsAddMachineModalOpen] = useState<boolean>(false);
 
-  // Feedback form pre-link context (opened from an alert or prediction)
+  // Feedback form pre-link context
   const [feedbackInitialContext, setFeedbackInitialContext] = useState<FeedbackContext | null>(null);
 
   // Toast notifications
@@ -55,7 +62,55 @@ export function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Primary Data Fetcher
+  // Synchronize route from browser URL on mount and on popstate
+  const syncRouteFromPath = useCallback(() => {
+    const path = window.location.pathname.toLowerCase();
+    if (
+      path === '/dashboard' ||
+      path === '/3d-view' ||
+      path === '/machines' ||
+      path === '/machine-details' ||
+      path === '/monitoring' ||
+      path === '/predictions' ||
+      path === '/maintenance' ||
+      path === '/alerts' ||
+      path === '/feedback' ||
+      path === '/sensor-data' ||
+      path === '/settings'
+    ) {
+      setCurrentRoute('workbench');
+      const tabName = path.substring(1) as NavTab;
+      setActiveTab(tabName);
+    } else {
+      setCurrentRoute('home');
+    }
+  }, []);
+
+  // Update browser URL without reloading
+  const navigateTo = useCallback((route: AppRoute, tab?: NavTab) => {
+    setCurrentRoute(route);
+    let targetPath = '/';
+    if (route === 'workbench') {
+      const selected = tab || activeTab || 'dashboard';
+      setActiveTab(selected);
+      targetPath = `/${selected}`;
+    }
+
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({}, '', targetPath);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    syncRouteFromPath();
+    const handlePopState = () => syncRouteFromPath();
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [syncRouteFromPath]);
+
+  // Public edition: every route is reachable without sign-in. No auth redirects.
+
+  // Primary Fleet Data Fetcher
   const loadFleetData = useCallback(async () => {
     try {
       // 1. Health check
@@ -90,26 +145,51 @@ export function App() {
     }
   }, [selectedMachineId]);
 
-  // Initial Load (dashboard only: the public homepage makes no API requests)
+  // Initial Load
   useEffect(() => {
-    if (currentRoute !== 'dashboard') return;
     loadFleetData();
-  }, [loadFleetData, currentRoute]);
+  }, [loadFleetData]);
 
   // Polling loop
   useEffect(() => {
-    if (currentRoute !== 'dashboard' || !autoRefresh) return;
+    if (!autoRefresh) return;
     const interval = setInterval(() => {
       loadFleetData();
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [autoRefresh, loadFleetData, currentRoute]);
+  }, [autoRefresh, loadFleetData]);
+
+  // Synchronize telemetry feed to the Industrial Alarm Engine
+  useEffect(() => {
+    evaluateFleetTelemetry(machines);
+  }, [machines, evaluateFleetTelemetry]);
+
+  // Keyboard accessibility: Escape or 'm' to quickly mute an active alarm
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = (document.activeElement?.tagName || '').toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return;
+      }
+      if ((e.key === 'Escape' || e.key === 'm' || e.key === 'M') && isAlarmActive && !isAudioMuted) {
+        muteAlarm();
+        showToast('Audible alarm muted by operator', 'alert');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAlarmActive, isAudioMuted, muteAlarm]);
 
   // Navigation handlers
+  const handleSelectTab = (tab: NavTab) => {
+    setActiveTab(tab);
+    navigateTo('workbench', tab);
+  };
+
   const handleSelectMachine = (machineId: string) => {
     setSelectedMachineId(machineId);
-    setActiveTab('machine-details');
+    handleSelectTab('machine-details');
   };
 
   const handleOpenManualModal = (machineId?: string) => {
@@ -119,7 +199,7 @@ export function App() {
 
   const handleOpenFeedback = (context: FeedbackContext) => {
     setFeedbackInitialContext(context);
-    setActiveTab('feedback');
+    handleSelectTab('feedback');
   };
 
   const handleRetryBackend = async () => {
@@ -132,23 +212,30 @@ export function App() {
     }
   };
 
-  // Route 1: public landing page (no authentication, no API data)
+  // Route 1: Public Landing Page
   if (currentRoute === 'home') {
-    return <HomePage onNavigate={() => setCurrentRoute('dashboard')} />;
+    return (
+      <HomePage
+        onNavigate={(dest) => {
+          if (dest === 'dashboard') navigateTo('workbench', 'dashboard');
+        }}
+      />
+    );
   }
 
-  // Route 2: read-only industrial dashboard
+  // Route 2: Public Industrial Workbench (no sign-in required)
   return (
     <div id="predictiq-root" className="flex min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950">
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={handleSelectTab}
         activeAlertsCount={fleetStats.active_alerts}
         criticalMachinesCount={machines.filter(m => m.status === 'Critical').length}
         backendOnline={backendOnline}
         isMobileOpen={isMobileNavOpen}
         onCloseMobile={() => setIsMobileNavOpen(false)}
+        onNavigateHome={() => navigateTo('home')}
       />
 
       {/* Main Content Area */}
@@ -160,7 +247,7 @@ export function App() {
           onToggleAutoRefresh={setAutoRefresh}
           activeAlertsCount={fleetStats.active_alerts}
           onOpenManualModal={() => handleOpenManualModal()}
-          onNavigateToAlerts={() => setActiveTab('alerts')}
+          onNavigateToAlerts={() => handleSelectTab('alerts')}
           backendOnline={backendOnline}
           onRetryBackend={handleRetryBackend}
         />
@@ -180,18 +267,6 @@ export function App() {
           </span>
         </div>
 
-        {/* Login-Free / Read-Only Notice */}
-        <div className="mx-4 mt-4 sm:mx-6 lg:mx-8 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-3 text-cyan-100">
-          <div className="flex items-start gap-3">
-            <Lock className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
-            <p className="text-xs text-cyan-100/80">
-              <span className="font-bold text-cyan-300">Read-only demo:</span> this dashboard opens without a login.
-              Write actions (manual input, maintenance, feedback, alert updates) require a backend operator session and
-              are rejected with HTTP 401 until one is established.
-            </p>
-          </div>
-        </div>
-
         {/* Backend Unavailable Warning Banner */}
         {!backendOnline && (
           <div className="mx-4 mt-4 sm:mx-6 lg:mx-8 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-amber-200">
@@ -202,7 +277,7 @@ export function App() {
                   <h4 className="text-xs font-bold text-amber-300">FastAPI Backend Offline</h4>
                   <p className="text-xs text-amber-200/80 mt-0.5">
                     Could not connect to FastAPI server at <code className="font-mono bg-slate-900/80 px-1 py-0.5 rounded text-white">{api.getBaseUrl()}</code>.
-                    {backendError ? ` (${backendError})` : ''} Start backend with <code className="font-mono bg-slate-900/80 px-1 py-0.5 rounded text-white">python -m uvicorn backend.main:app --reload</code>.
+                    {backendError ? ` (${backendError})` : ''} Verify backend is running.
                   </p>
                 </div>
               </div>
@@ -233,6 +308,14 @@ export function App() {
             />
           )}
 
+          {activeTab === '3d-view' && (
+            <Machine3DViewPage
+              machines={machines}
+              initialMachineId={selectedMachineId}
+              onSelectMachine={handleSelectMachine}
+            />
+          )}
+
           {activeTab === 'machines' && (
             <MachinesPage
               machines={machines}
@@ -247,8 +330,12 @@ export function App() {
               machineId={selectedMachineId}
               machines={machines}
               onSelectMachine={setSelectedMachineId}
-              onBackToDashboard={() => setActiveTab('dashboard')}
+              onBackToDashboard={() => handleSelectTab('dashboard')}
               onOpenManualModal={handleOpenManualModal}
+              onNavigate3DView={(id) => {
+                setSelectedMachineId(id);
+                handleSelectTab('3d-view');
+              }}
             />
           )}
 
@@ -302,7 +389,7 @@ export function App() {
           )}
 
           {activeTab === 'settings' && (
-            <SettingsPage />
+            <SettingsPage machines={machines} />
           )}
         </main>
       </div>
@@ -351,4 +438,15 @@ export function App() {
   );
 }
 
+export function App() {
+  return (
+    <AlarmProvider>
+      <SimulationProvider>
+        <MainAppContent />
+      </SimulationProvider>
+    </AlarmProvider>
+  );
+}
+
 export default App;
+

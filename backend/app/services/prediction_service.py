@@ -2,10 +2,6 @@
 
 from typing import Any, Dict
 
-from ml.prediction import predict_machine_health
-from ml.train import get_registry_status
-
-
 class PredictionService:
     @staticmethod
     def predict(
@@ -20,6 +16,8 @@ class PredictionService:
         max_vibration: float,
         machine_type: str,
     ) -> Dict[str, Any]:
+        from ml.prediction import predict_machine_health
+
         return predict_machine_health(
             machine_id=machine_id,
             temperature=temperature,
@@ -36,6 +34,8 @@ class PredictionService:
     @staticmethod
     def get_status() -> Dict[str, Any]:
         """Honest registry status: trained only when a real artifact loads."""
+        from ml.train import get_registry_status
+
         return get_registry_status()
 
 
