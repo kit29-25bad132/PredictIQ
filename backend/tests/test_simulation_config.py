@@ -15,8 +15,9 @@ from sqlalchemy.pool import StaticPool
 from backend.app.core import auth as auth_module
 from backend.app.core.config import get_settings
 from backend.app.db.database import Base, get_db
-from backend.app.db.models import Machine
+from backend.app.db.models import Machine, Organization
 from backend.app.main import app
+from backend.tests.tenant_utils import USER_A, auth_headers, install_auth, seed_membership, seed_organization
 from backend.app.schemas.simulation import (
     SimulationConfigBase,
     SimulationConfigUpdate,
@@ -77,8 +78,9 @@ def _valid_config_payload() -> dict:
 
 
 @pytest.fixture
-def client_with_db():
-    """In-memory SQLite test client for fast, deterministic unit/integration testing."""
+def client_with_db(monkeypatch):
+    """In-memory SQLite client: org member reads, operator writes."""
+    install_auth(monkeypatch)
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -87,9 +89,13 @@ def client_with_db():
     Base.metadata.create_all(bind=engine)
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-    # Pre-seed test machine
+    # Pre-seed test machine and its owning organization
     db = TestingSessionLocal()
+    org = seed_organization(db, "sim-org")
+    seed_membership(db, org, "owner", user_id=USER_A)
+    org_id = str(org.id)
     machine = Machine(
+        organization_id=org.id,
         machine_id="MOTOR-001",
         name="Digital Twin Induction Motor",
         type="Induction Motor",
@@ -112,6 +118,7 @@ def client_with_db():
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
+        test_client.headers.update(auth_headers(USER_A, org_id))
         yield test_client
     app.dependency_overrides.clear()
 
@@ -237,7 +244,9 @@ def test_simulation_config_mutations_require_operator_session(client_with_db):
         )
         assert invalid.status_code == 422
 
-        # Public GET remains readable without credentials.
+        # GET requires an authenticated organization member (Phase 3): the
+        # fixture client carries a member token, a bare client does not.
+        assert TestClient(app).get("/api/machines/MOTOR-001/simulation-config").status_code == 401
         assert client.get("/api/machines/MOTOR-001/simulation-config").status_code == 200
 
         # Fail closed when operator session authentication is not configured.
@@ -256,7 +265,7 @@ def test_simulation_config_api_endpoints(client_with_db):
     _set_operator_secret(OPERATOR_TEST_SECRET)
     try:
         # 1. Fetch simulation config for test machine MOTOR-001 (auto-created default)
-        #    GET stays public: no credentials needed.
+        #    GET requires an authenticated organization member (default headers).
         get_res = client.get("/api/machines/MOTOR-001/simulation-config")
         assert get_res.status_code == 200
         data = get_res.json()

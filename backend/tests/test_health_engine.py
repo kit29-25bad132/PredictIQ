@@ -1,3 +1,11 @@
+"""
+Health engine tests (Phase 3: organization-aware writes).
+
+The engine must stamp every alert with the machine's organization, and telemetry
+ingest must reject unregistered devices.
+"""
+
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -6,8 +14,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.app.core import auth as auth_module
+from backend.app.core.config import get_settings
 from backend.app.db.database import Base, get_db
-from backend.app.db.models import Alert, Device, Machine, SensorReading
+from backend.app.db.models import Alert, Device, Machine, Organization, SensorReading
 from backend.app.main import app
 from backend.app.services.health_engine import (
     DEFAULT_MAX_TEMP,
@@ -17,6 +27,8 @@ from backend.app.services.health_engine import (
     evaluate_reading,
 )
 
+ORG_ID = "00000000-0000-4000-8000-0000000000aa"
+
 
 @pytest.fixture
 def session() -> Session:
@@ -24,11 +36,14 @@ def session() -> Session:
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine)
     with factory() as db:
+        db.add(Organization(id=uuid.UUID(ORG_ID), name="Health", slug="health"))
+        db.commit()
         yield db
 
 
 def make_machine(db: Session, **specs) -> Machine:
     machine = Machine(
+        organization_id=uuid.UUID(ORG_ID),
         machine_id="M-HEALTH",
         name="Health test machine",
         type="Pump",
@@ -42,6 +57,7 @@ def make_machine(db: Session, **specs) -> Machine:
 
 def make_reading(machine: Machine, **values) -> SensorReading:
     return SensorReading(
+        organization_id=machine.organization_id,
         machine_id=machine.machine_id,
         device_id="D-HEALTH",
         timestamp=values.pop("timestamp", datetime.now(timezone.utc)),
@@ -118,7 +134,9 @@ def test_alert_creation_and_identical_reading_deduplication(session) -> None:
     machine = make_machine(session)
     timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
     first = make_reading(machine, vibration=DEFAULT_MAX_VIBRATION * 1.2, timestamp=timestamp)
-    repeated = make_reading(machine, vibration=DEFAULT_MAX_VIBRATION * 1.2, timestamp=timestamp + timedelta(seconds=30))
+    repeated = make_reading(
+        machine, vibration=DEFAULT_MAX_VIBRATION * 1.2, timestamp=timestamp + timedelta(seconds=30)
+    )
 
     evaluate_reading(machine, first, session)
     session.commit()
@@ -129,12 +147,18 @@ def test_alert_creation_and_identical_reading_deduplication(session) -> None:
     assert len(alerts) == 1
     assert alerts[0].severity == "Critical"
     assert alerts[0].status == "ACTIVE"
+    # Tenant stamping: the alert inherits the machine's organization.
+    assert str(alerts[0].organization_id) == ORG_ID
 
 
 def test_alert_can_be_created_again_after_cooldown(session) -> None:
     machine = make_machine(session)
-    first = make_reading(machine, current=DEFAULT_RATED_CURRENT, timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc))
-    later = make_reading(machine, current=DEFAULT_RATED_CURRENT, timestamp=first.timestamp + timedelta(minutes=6))
+    first = make_reading(
+        machine, current=DEFAULT_RATED_CURRENT, timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc)
+    )
+    later = make_reading(
+        machine, current=DEFAULT_RATED_CURRENT, timestamp=first.timestamp + timedelta(minutes=6)
+    )
 
     evaluate_reading(machine, first, session)
     session.commit()
@@ -151,12 +175,39 @@ def test_sensor_ingest_evaluates_and_persists_health_and_alert() -> None:
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    with factory() as db:
+        db.add(Organization(id=uuid.UUID(ORG_ID), name="Health", slug="health"))
+        db.add(
+            Machine(
+                organization_id=uuid.UUID(ORG_ID),
+                machine_id="M-ROUTE",
+                name="Route",
+                type="Pump",
+                location="Bay",
+            )
+        )
+        db.flush()
+        db.add(
+            Device(
+                organization_id=uuid.UUID(ORG_ID),
+                device_id="D-ROUTE",
+                machine_id="M-ROUTE",
+                device_type="ESP32",
+                firmware_version="1.0.0",
+                status="ONLINE",
+                source="WOKWI",
+            )
+        )
+        db.commit()
 
     def override_get_db():
         with factory() as db:
             yield db
 
+    get_settings().device_api_key = "route-test-key"
+    auth_module._WARNED_UNCONFIGURED = False
     app.dependency_overrides[get_db] = override_get_db
     try:
         with TestClient(app) as client:
@@ -172,13 +223,17 @@ def test_sensor_ingest_evaluates_and_persists_health_and_alert() -> None:
                     "rpm": 1450,
                     "source": "WOKWI",
                 },
+                headers={"X-API-Key": "route-test-key"},
             )
-            assert response.status_code == 201
+            assert response.status_code == 201, response.text
 
         with factory() as db:
             machine = db.query(Machine).filter_by(machine_id="M-ROUTE").one()
             assert machine.status == "Critical"
             assert db.query(SensorReading).count() == 1
-            assert db.query(Alert).count() == 1
+            alert = db.query(Alert).one()
+            assert str(alert.organization_id) == ORG_ID
     finally:
+        get_settings().device_api_key = ""
+        auth_module._WARNED_UNCONFIGURED = False
         app.dependency_overrides.pop(get_db, None)

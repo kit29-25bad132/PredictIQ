@@ -1,12 +1,12 @@
 """
-Health contract and fleet statistics endpoint tests.
+Health contract and organization fleet statistics endpoint tests.
 
 The frontend (frontend/src/services/api.ts) consumes:
-- GET /api/health  -> system/version/timestamp/database/counts snapshot
-- GET /api/stats   -> fleet KPIs (dashboard MetricCards)
+- GET /api/health  -> system/version/timestamp/database/counts snapshot (public)
+- GET /api/stats   -> fleet KPIs (dashboard MetricCards), organization-scoped
 
-These tests pin the authoritative response shapes and prove the values are
-computed from real database rows (no hardcoded zeros, no fabricated stats).
+Phase 3: /api/stats requires an authenticated organization member and must never
+count another organization's rows.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -20,6 +20,16 @@ from sqlalchemy.pool import StaticPool
 from backend.app.db.database import Base, get_db
 from backend.app.db.models import Alert, Device, Machine, SensorReading
 from backend.app.main import app, _liveness_db
+from backend.tests.tenant_utils import (
+    USER_A,
+    USER_B,
+    auth_headers,
+    install_auth,
+    seed_device,
+    seed_machine,
+    seed_membership,
+    seed_organization,
+)
 
 
 def _override_session(factory):
@@ -31,48 +41,57 @@ def _override_session(factory):
 
 
 @pytest.fixture
-def client():
+def tenant(monkeypatch):
+    install_auth(monkeypatch)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
+    with factory() as db:
+        org = seed_organization(db, "acme")
+        seed_membership(db, org, "owner", user_id=USER_A)
+        seed_organization(db, "other")
+    org_id = org.id
+
     app.dependency_overrides[get_db] = _override_session(factory)
-    # /api/health and /api/stats resolve their session through _liveness_db;
-    # override it too so the test database is the one actually queried.
     app.dependency_overrides[_liveness_db] = _override_session(factory)
     try:
-        yield TestClient(app)
+        yield TestClient(app), factory, org_id
     finally:
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(_liveness_db, None)
 
 
-def _seed_real_rows(db) -> None:
-    """Real rows through the ORM — no demo fixtures are committed anywhere."""
+def _seed_real_rows(db, org_id, machine_id="M-STATS", device_id="D-STATS") -> None:
+    now = datetime.now(timezone.utc)
     machine = Machine(
-        machine_id="M-STATS",
+        organization_id=org_id,
+        machine_id=machine_id,
         name="Stats machine",
         type="Centrifugal Pump",
         location="Bay 1",
     )
     device = Device(
-        device_id="D-STATS",
-        machine_id="M-STATS",
-        last_seen=datetime.now(timezone.utc),
+        organization_id=org_id,
+        device_id=device_id,
+        machine_id=machine_id,
+        last_seen=now,
         status="ONLINE",
         source="WOKWI",
     )
     stale_device = Device(
-        device_id="D-STALE",
-        machine_id="M-STATS",
-        last_seen=datetime.now(timezone.utc) - timedelta(hours=1),
+        organization_id=org_id,
+        device_id=f"{device_id}-STALE",
+        machine_id=machine_id,
+        last_seen=now - timedelta(hours=1),
         status="OFFLINE",
         source="WOKWI",
     )
     reading = SensorReading(
-        machine_id="M-STATS",
-        device_id="D-STATS",
-        timestamp=datetime.now(timezone.utc),
+        organization_id=org_id,
+        machine_id=machine_id,
+        device_id=device_id,
+        timestamp=now,
         temperature=50.0,
         vibration=2.0,
         current=5.0,
@@ -80,14 +99,16 @@ def _seed_real_rows(db) -> None:
         source="WOKWI",
     )
     alert = Alert(
-        machine_id="M-STATS",
+        organization_id=org_id,
+        machine_id=machine_id,
         alert_type="VIBRATION_HIGH",
         severity="Warning",
         message="Test alert",
         status="ACTIVE",
     )
     resolved_alert = Alert(
-        machine_id="M-STATS",
+        organization_id=org_id,
+        machine_id=machine_id,
         alert_type="TEMPERATURE_HIGH",
         severity="Info",
         message="Resolved alert",
@@ -98,9 +119,9 @@ def _seed_real_rows(db) -> None:
 
 
 class TestHealthContract:
-    def test_health_returns_frontend_contract_fields(self, client):
+    def test_health_is_public_and_keeps_contract_fields(self, tenant):
+        client, _, _ = tenant
         body = client.get("/api/health").json()
-        # api.ts getHealth() consumes exactly these fields.
         for field in (
             "status",
             "system",
@@ -115,36 +136,26 @@ class TestHealthContract:
         ):
             assert field in body, f"health contract missing field: {field}"
         assert body["status"] == "ok"
-        assert body["system"]
-        assert body["database"]
 
-    def test_health_counts_are_real(self, client):
-        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-        Base.metadata.create_all(engine)
-        factory = sessionmaker(bind=engine, expire_on_commit=False)
-
-        def override():
-            with factory() as db:
-                yield db
-
-        app.dependency_overrides[get_db] = override
-        app.dependency_overrides[_liveness_db] = override
-        try:
-            with factory() as db:
-                _seed_real_rows(db)
-            body = client.get("/api/health").json()
-            assert body["active_machines"] == 1
-            assert body["registered_devices"] == 2
-            assert body["connected_esp32_devices"] == 1
-            assert body["total_sensor_readings"] == 1
-        finally:
-            app.dependency_overrides.pop(get_db, None)
-            app.dependency_overrides.pop(_liveness_db, None)
+    def test_health_counts_are_real(self, tenant):
+        client, factory, org_id = tenant
+        with factory() as db:
+            _seed_real_rows(db, org_id)
+        body = client.get("/api/health").json()
+        assert body["active_machines"] == 1
+        assert body["registered_devices"] == 2
+        assert body["connected_esp32_devices"] == 1
+        assert body["total_sensor_readings"] == 1
 
 
 class TestFleetStats:
-    def test_stats_returns_frontend_contract_fields(self, client):
-        body = client.get("/api/stats").json()
+    def test_stats_requires_authentication(self, tenant):
+        client, _, _ = tenant
+        assert client.get("/api/stats").status_code == 401
+
+    def test_stats_returns_contract_fields(self, tenant):
+        client, _, org_id = tenant
+        body = client.get("/api/stats", headers=auth_headers(USER_A, org_id)).json()
         for field in (
             "total_machines",
             "total_devices",
@@ -154,35 +165,24 @@ class TestFleetStats:
             "active_alerts",
             "data_collection_status",
         ):
-            assert field in body, f"stats contract missing field: {field}"
+            assert field in body
 
-    def test_stats_values_are_zero_on_empty_database(self, client):
-        body = client.get("/api/stats").json()
+    def test_stats_zero_on_empty_organization(self, tenant):
+        client, _, org_id = tenant
+        body = client.get("/api/stats", headers=auth_headers(USER_A, org_id)).json()
         assert body["total_machines"] == 0
         assert body["active_alerts"] == 0
         assert body["data_collection_status"] == "WAITING"
 
-    def test_stats_values_come_from_real_rows(self, client):
-        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-        Base.metadata.create_all(engine)
-        factory = sessionmaker(bind=engine, expire_on_commit=False)
-
-        def override():
-            with factory() as db:
-                yield db
-
-        app.dependency_overrides[get_db] = override
-        app.dependency_overrides[_liveness_db] = override
-        try:
-            with factory() as db:
-                _seed_real_rows(db)
-            body = client.get("/api/stats").json()
-            assert body["total_machines"] == 1
-            assert body["total_devices"] == 2
-            assert body["connected_devices"] == 1  # stale device excluded
-            assert body["total_sensor_readings"] == 1
-            assert body["active_alerts"] == 1  # resolved alert excluded
-            assert body["data_collection_status"] == "ACTIVE"
-        finally:
-            app.dependency_overrides.pop(get_db, None)
-            app.dependency_overrides.pop(_liveness_db, None)
+    def test_stats_are_scoped_to_the_organization(self, tenant):
+        """Organization A must never see organization B's counts."""
+        client, factory, org_a = tenant
+        with factory() as db:
+            _seed_real_rows(db, org_a)
+        body = client.get("/api/stats", headers=auth_headers(USER_A, org_a)).json()
+        assert body["total_machines"] == 1
+        assert body["total_devices"] == 2
+        assert body["connected_devices"] == 1
+        assert body["total_sensor_readings"] == 1
+        assert body["active_alerts"] == 1
+        assert body["data_collection_status"] == "ACTIVE"

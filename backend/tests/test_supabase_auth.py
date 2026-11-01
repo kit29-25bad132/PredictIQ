@@ -13,7 +13,7 @@ Covered:
   unknown kid is rejected after exactly one refresh
 - unconfigured Supabase authentication returns 503
 - device API-key auth and operator session auth are unchanged and independent
-- Phase 1 does NOT change route access (reads stay public)
+- after Phase 3, private reads require an authenticated organization member
 """
 
 import base64
@@ -319,26 +319,39 @@ class TestExistingAuthUnaffected:
         monkeypatch.setattr(get_settings(), "device_api_key", "device-test-key")
         auth_module._WARNED_UNCONFIGURED = False
         try:
-            ok = client.post(
-                "/api/machines",
-                json={"machine_id": "M-P1", "name": "P1", "type": "Pump", "location": "Bay"},
-                headers={"X-API-Key": "device-test-key"},
-            )
-            assert ok.status_code == 201
-
+            # The device gate still exists and still rejects user tokens.
             rejected = client.post(
-                "/api/machines",
-                json={"machine_id": "M-P2", "name": "P2", "type": "Pump", "location": "Bay"},
+                "/api/predict",
+                json={
+                    "machine_id": "M-P1",
+                    "temperature": 50,
+                    "vibration": 2,
+                    "current": 5,
+                    "rpm": 1450,
+                },
                 headers=_bearer(_token(signing_key)),
             )
             assert rejected.status_code == 403
+
+            # Machine registration moved to organization admins in Phase 3, so a
+            # bare device key is not a user credential either (401: no Supabase
+            # identity on this endpoint at all).
+            assert (
+                client.post(
+                    "/api/machines",
+                    json={"machine_id": "M-P1", "name": "P1", "type": "Pump", "location": "Bay"},
+                    headers={"X-API-Key": "device-test-key"},
+                ).status_code
+                == 401
+            )
         finally:
             auth_module._WARNED_UNCONFIGURED = False
 
-    def test_reads_remain_public_in_phase_1(self, jwks, db_client):
-        """Route access is intentionally unchanged until Phase 3."""
+    def test_reads_are_protected_after_phase_3(self, jwks, db_client):
+        """Phase 3: private reads require an authenticated organization member."""
         client, _ = db_client
-        assert client.get("/api/machines").status_code == 200
-        assert client.get("/api/alerts").status_code == 200
-        assert client.get("/api/stats").status_code == 200
+        assert client.get("/api/machines").status_code == 401
+        assert client.get("/api/alerts").status_code == 401
+        assert client.get("/api/stats").status_code == 401
+        # Health remains genuinely public.
         assert client.get("/api/health").status_code == 200

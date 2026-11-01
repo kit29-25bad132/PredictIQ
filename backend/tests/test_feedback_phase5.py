@@ -10,6 +10,7 @@ Covers the feedback DoD:
 - migration 006 creates the feedback_records table and upgrades/downgrades cleanly
 """
 
+import uuid
 from datetime import datetime, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -21,8 +22,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.app.db.database import Base, get_db
-from backend.app.db.models import Alert, FeedbackRecord, Machine, MaintenanceRecord, Prediction
+from backend.app.db.models import (
+    Alert,
+    FeedbackRecord,
+    Machine,
+    MaintenanceRecord,
+    Organization,
+    Prediction,
+)
 from backend.app.main import app
+from backend.tests.tenant_utils import USER_A, auth_headers, install_auth, seed_membership, seed_organization
 
 ROOT = Path(__file__).parents[1]
 
@@ -44,20 +53,36 @@ def session_factory():
 
 
 @pytest.fixture
-def client(session_factory):
+def client(session_factory, monkeypatch):
+    """Authenticated owner of one organization (Phase 3: reads are not public)."""
+    install_auth(monkeypatch)
+    with session_factory() as db:
+        org = seed_organization(db, "feedback-org")
+        seed_membership(db, org, "owner", user_id=USER_A)
+        org_id = str(org.id)
+
     def override_get_db():
         with session_factory() as db:
             yield db
 
     app.dependency_overrides[get_db] = override_get_db
     try:
-        yield TestClient(app)
+        test_client = TestClient(app)
+        test_client.headers.update(auth_headers(USER_A, org_id))
+        yield test_client
     finally:
         app.dependency_overrides.pop(get_db, None)
 
 
+def _org_id(db: Session) -> uuid.UUID:
+    org = db.query(Organization).first()
+    assert org is not None, "test fixture must seed an organization"
+    return org.id
+
+
 def add_machine(db: Session, machine_id: str = "M-FEED") -> Machine:
     machine = Machine(
+        organization_id=_org_id(db),
         machine_id=machine_id,
         name=f"{machine_id} test machine",
         type="Centrifugal Pump",
@@ -71,6 +96,7 @@ def add_machine(db: Session, machine_id: str = "M-FEED") -> Machine:
 
 def add_prediction(db: Session, machine_id: str) -> Prediction:
     prediction = Prediction(
+        organization_id=_org_id(db),
         machine_id=machine_id,
         timestamp=datetime.now(timezone.utc),
         failure_probability=0.62,
@@ -84,6 +110,7 @@ def add_prediction(db: Session, machine_id: str) -> Prediction:
 
 def add_alert(db: Session, machine_id: str) -> Alert:
     alert = Alert(
+        organization_id=_org_id(db),
         machine_id=machine_id,
         alert_type="Vibration",
         severity="Warning",
@@ -97,6 +124,7 @@ def add_alert(db: Session, machine_id: str) -> Alert:
 
 def add_maintenance(db: Session, machine_id: str) -> MaintenanceRecord:
     record = MaintenanceRecord(
+        organization_id=_org_id(db),
         machine_id=machine_id,
         component="Bearing",
         failure_type="Wear",

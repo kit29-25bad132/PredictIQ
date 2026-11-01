@@ -214,44 +214,61 @@ class TestTenantDefaults:
             columns = {c["name"] for c in inspect(engine).get_columns(table)}
             assert "organization_id" in columns, table
 
-    def test_default_organization_is_legacy(self, db):
-        """Transitional bridge: pre-Phase-3 writes land in the legacy org."""
+    def test_no_default_organization_is_applied(self, db):
+        """Phase 3 removed the transitional default: ownership must be explicit."""
         factory, _ = db
         with factory() as session:
-            session.add(_org("legacy-holder", "Holder"))
-            # The legacy organization row is created by the migration, not by
-            # the ORM; insert it here so the FK target exists where enforced.
-            session.add(
-                Organization(
-                    id=LEGACY_ORGANIZATION_ID, name="Legacy", slug="legacy", status="active"
-                )
-            )
+            machine = Machine(machine_id="M-NO-ORG", name="M", type="Pump", location="Bay")
+            assert machine.organization_id is None
+            session.add(machine)
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+    def test_explicit_organization_assignment_persists(self, db):
+        factory, _ = db
+        with factory() as session:
+            org = _org("explicit-org")
+            session.add(org)
             session.commit()
 
-            machine = Machine(machine_id="M-LEGACY", name="M", type="Pump", location="Bay")
+            machine = Machine(
+                organization_id=org.id,
+                machine_id="M-EXPLICIT",
+                name="M",
+                type="Pump",
+                location="Bay",
+            )
             session.add(machine)
             session.commit()
-            assert machine.organization_id == LEGACY_ORGANIZATION_ID
+            assert machine.organization_id == org.id
 
     def test_global_machine_and_device_uniqueness_preserved(self, db):
         factory, _ = db
         with factory() as session:
-            session.add(Organization(id=LEGACY_ORGANIZATION_ID, name="Legacy", slug="legacy"))
-            session.add(_org("second-org"))
+            first = _org("first-org")
+            second = _org("second-org")
+            session.add_all([first, second])
             session.commit()
 
-            session.add(Machine(machine_id="M-UNIQ", name="M", type="Pump", location="Bay"))
+            session.add(Machine(
+                organization_id=first.id, machine_id="M-UNIQ", name="M", type="Pump", location="Bay"
+            ))
             session.commit()
-            session.add(Machine(machine_id="M-UNIQ", name="M2", type="Pump", location="Bay2"))
+            session.add(Machine(
+                organization_id=second.id, machine_id="M-UNIQ", name="M2", type="Pump", location="Bay2"
+            ))
             with pytest.raises(IntegrityError):
                 session.commit()
 
-    def test_organization_slug_uniqueness_does_not_constrain_machine_ids(self, db):
-        """Two organizations may not share tenant data via duplicate machine ids."""
+    def test_machine_ids_remain_globally_unique_across_organizations(self, db):
+        """Firmware/gateway identifiers stay globally unique (Phase 2 contract)."""
         factory, _ = db
         with factory() as session:
-            session.add(Organization(id=LEGACY_ORGANIZATION_ID, name="Legacy", slug="legacy"))
+            org = _org("global-org")
+            session.add(org)
             session.commit()
-            session.add(Machine(machine_id="M-GLOBAL", name="M", type="Pump", location="Bay"))
+            session.add(Machine(
+                organization_id=org.id, machine_id="M-GLOBAL", name="M", type="Pump", location="Bay"
+            ))
             session.commit()
             assert session.query(Machine).filter(Machine.machine_id == "M-GLOBAL").count() == 1
