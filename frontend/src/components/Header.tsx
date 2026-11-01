@@ -1,6 +1,17 @@
 import React from 'react';
-import { Radio, RefreshCw, Bell, Plus, Database, CheckCircle2, AlertCircle } from 'lucide-react';
-import api from '../services/api';
+import {
+  Radio,
+  RefreshCw,
+  Bell,
+  Plus,
+  Database,
+  CheckCircle2,
+  AlertCircle,
+  AlertOctagon,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
+import { useAlarm } from '../context/AlarmContext';
 
 interface HeaderProps {
   activeTab: string;
@@ -23,6 +34,8 @@ export const Header: React.FC<HeaderProps> = ({
   backendOnline,
   onRetryBackend,
 }) => {
+  const { isAlarmActive, isAudioPlaying, isAudioMuted, muteAlarm, unmuteAlarm } = useAlarm();
+
   const getPageTitle = () => {
     switch (activeTab) {
       case 'dashboard':
@@ -39,6 +52,8 @@ export const Header: React.FC<HeaderProps> = ({
         return 'Ground-Truth Maintenance Records';
       case 'alerts':
         return 'Anomaly Alerts & Incident Log';
+      case 'feedback':
+        return 'Ground-Truth Technician Feedback';
       case 'sensor-data':
         return 'Sensor Ingestion & PostgreSQL Studio';
       case 'settings':
@@ -51,7 +66,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header
       id="predictiq-header"
-      className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-800/80 bg-slate-950/80 px-4 sm:px-6 backdrop-blur-md"
+      className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-800/80 bg-slate-950/85 px-4 sm:px-6 backdrop-blur-md"
     >
       {/* Left: Current Page Title & Breadcrumb */}
       <div className="flex items-center gap-3">
@@ -67,7 +82,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Right: Controls & Indicators */}
+      {/* Right: Controls, Status & User Profile Menu */}
       <div className="flex items-center gap-2 sm:gap-3">
         {/* PostgreSQL / FastAPI Backend Status Indicator */}
         <div className="flex items-center">
@@ -77,8 +92,8 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="hidden sm:inline">PostgreSQL + FastAPI Online</span>
-              <span className="sm:hidden">Online</span>
+              <span className="hidden md:inline">PostgreSQL + FastAPI Online</span>
+              <span className="md:hidden">Online</span>
             </div>
           ) : (
             <button
@@ -91,6 +106,31 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
         </div>
+
+        {/* Audible Alarm Quick Indicator & Mute Button */}
+        {isAlarmActive ? (
+          isAudioMuted ? (
+            <button
+              id="btn-header-unmute-alarm"
+              onClick={unmuteAlarm}
+              title="Critical alarm active (Audio Muted) - Click to unmute sound"
+              className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/20 px-2.5 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition-all shadow-sm"
+            >
+              <VolumeX className="h-3.5 w-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Muted</span>
+            </button>
+          ) : (
+            <button
+              id="btn-header-mute-alarm"
+              onClick={muteAlarm}
+              title="Audible alarm is BEEPING - Click to MUTE sound immediately"
+              className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-black text-white hover:bg-rose-500 transition-all shadow-md shadow-rose-600/30 animate-pulse"
+            >
+              <Volume2 className="h-3.5 w-3.5" />
+              <span>MUTE ALARM</span>
+            </button>
+          )
+        ) : null}
 
         {/* Live Auto-Refresh Controller */}
         <button

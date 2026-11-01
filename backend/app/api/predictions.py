@@ -28,9 +28,7 @@ from backend.app.services.ai_provider import (
     build_inference_input,
     get_predictor,
 )
-from backend.app.services.model_evaluation import build_evaluation
 from backend.app.services.prediction_service import prediction_service
-from ml.train import train_governed_model
 
 router = APIRouter(tags=["Predictions & Explanations"])
 
@@ -74,6 +72,8 @@ def get_ai_model_status() -> ModelStatusResponse:
 @router.get("/model-evaluation", response_model=ModelEvaluationResponse)
 def get_model_evaluation(db: Session = Depends(get_db)) -> ModelEvaluationResponse:
     """Honest prototype-vs-reality evaluation from stored ground truth."""
+    from backend.app.services.model_evaluation import build_evaluation
+
     report = build_evaluation(db)
     payload = dict(report)
     payload.pop("samples", None)
@@ -89,6 +89,9 @@ def train_governed_ml_model(payload: ModelTrainRequest, db: Session = Depends(ge
     when enough two-class ground truth exists. Returns HTTP 200 with
     ``success=false`` on honest refusals so clients can display the reason.
     """
+    from backend.app.services.model_evaluation import build_evaluation
+    from ml.train import train_governed_model
+
     report = build_evaluation(db)
     result = train_governed_model(
         report["samples"],

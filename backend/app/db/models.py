@@ -35,6 +35,7 @@ class Machine(Base):
     predictions = relationship("Prediction", back_populates="machine", cascade="all, delete-orphan")
     alerts = relationship("Alert", back_populates="machine", cascade="all, delete-orphan")
     feedback_records = relationship("FeedbackRecord", back_populates="machine", cascade="all, delete-orphan")
+    simulation_config = relationship("MachineSimulationConfig", back_populates="machine", uselist=False, cascade="all, delete-orphan")
     __table_args__ = (
         CheckConstraint(
             "status IN ('Healthy', 'Warning', 'Critical', 'Maintenance')",
@@ -213,3 +214,57 @@ class FeedbackRecord(Base):
         CheckConstraint("outcome IN ('Confirmed', 'Not Confirmed', 'Cancelled')", name="ck_feedback_records_outcome"),
         CheckConstraint("feedback_source IN ('MANUAL', 'INSPECTION')", name="ck_feedback_records_source"),
     )
+
+# ============================================================================
+# 8. MACHINE SIMULATION CONFIGURATION TABLE (Dynamic Digital Twin Settings)
+# ============================================================================
+class MachineSimulationConfig(Base):
+    __tablename__ = "simulation_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    machine_id = Column(String(50), ForeignKey("machines.machine_id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+
+    # Motor power switch & global simulation mode
+    motor_powered = Column(Boolean, default=True, nullable=False)
+    simulation_mode = Column(String(50), default="cycling", nullable=False)  # cycling, increasing, decreasing, harmonic, bearing_fault, random_walk
+    update_interval_ms = Column(Integer, default=1000, nullable=False)
+
+    # 1. Temperature parameters (°C)
+    temp_min = Column(Float, default=22.0, nullable=False)
+    temp_max = Column(Float, default=45.0, nullable=False)
+    temp_target = Column(Float, default=32.0, nullable=False)
+    temp_step = Column(Float, default=0.2, nullable=False)
+    temp_warning = Column(Float, default=45.0, nullable=False)
+    temp_critical = Column(Float, default=60.0, nullable=False)
+
+    # 2. Motor Current parameters (A)
+    current_min = Column(Float, default=0.2, nullable=False)
+    current_max = Column(Float, default=3.0, nullable=False)
+    current_target = Column(Float, default=1.2, nullable=False)
+    current_step = Column(Float, default=0.1, nullable=False)
+    current_warning = Column(Float, default=2.0, nullable=False)
+    current_critical = Column(Float, default=3.0, nullable=False)
+
+    # 3. RPM parameters (RPM)
+    rpm_min = Column(Float, default=0.0, nullable=False)
+    rpm_max = Column(Float, default=1800.0, nullable=False)
+    rpm_target = Column(Float, default=1450.0, nullable=False)
+    rpm_step = Column(Float, default=50.0, nullable=False)
+    rpm_rated = Column(Float, default=1500.0, nullable=False)
+    rpm_warning = Column(Float, default=1050.0, nullable=False)
+    rpm_critical = Column(Float, default=750.0, nullable=False)
+
+    # 4. Vibration parameters (m/s² RMS)
+    vib_min = Column(Float, default=0.1, nullable=False)
+    vib_max = Column(Float, default=5.0, nullable=False)
+    vib_target = Column(Float, default=0.8, nullable=False)
+    vib_step = Column(Float, default=0.05, nullable=False)
+    vib_warning = Column(Float, default=1.5, nullable=False)
+    vib_critical = Column(Float, default=3.0, nullable=False)
+
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationship back to Machine
+    machine = relationship("Machine", back_populates="simulation_config")
+

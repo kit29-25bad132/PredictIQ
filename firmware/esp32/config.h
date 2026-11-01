@@ -55,7 +55,9 @@
 // the 'X-API-Key' header on every POST. Leave empty ONLY for a backend whose
 // DEVICE_API_KEY is unset (gate disabled with a startup warning); a deployed
 // gated backend rejects unauthenticated writes with HTTP 401/403.
+#ifndef DEVICE_API_KEY
 #define DEVICE_API_KEY            ""
+#endif
 
 // Hardware & Asset Identification
 #define DEVICE_ID                 "ESP32_001"
@@ -92,10 +94,6 @@
 // Set via build flag or by editing the DEVICE_API_KEY define above. Never
 // commit a real key. Example build flag in platformio.ini:
 //   -D DEVICE_API_KEY="\"your-real-key\""
-#ifndef DEVICE_API_KEY
-#define DEVICE_API_KEY ""
-#endif
-
 // =============================================================================
 // TLS DISCIPLINE (security plan §9.6)
 // =============================================================================

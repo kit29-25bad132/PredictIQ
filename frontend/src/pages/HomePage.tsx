@@ -29,9 +29,7 @@ interface HomePageProps {
   onNavigate: (route: 'dashboard') => void;
 }
 
-export const HomePage: React.FC<HomePageProps> = ({
-  onNavigate,
-}) => {
+export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const scrollToSection = (id: string) => {
@@ -212,6 +210,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           {/* Action CTAs */}
           <div className="hidden md:flex items-center gap-3">
             <button
+              id="btn-nav-dashboard"
               onClick={() => onNavigate('dashboard')}
               className="flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
             >
@@ -318,7 +317,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 onClick={() => onNavigate('dashboard')}
                 className="flex items-center gap-2 rounded-xl bg-cyan-500 px-6 py-3 text-sm font-bold text-slate-950 transition-all hover:bg-cyan-400 shadow-lg shadow-cyan-500/25 hover:scale-[1.02]"
               >
-                <span>Open Dashboard</span>
+                <span>Get Started</span>
                 <ArrowRight className="h-4 w-4" />
               </button>
 
@@ -555,7 +554,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               </div>
               <h4 className="text-sm font-bold text-white mb-1">FastAPI REST Gateway</h4>
               <p className="text-xs text-slate-400">
-                High-performance Python gateway enforcing device API-key write-gate validation.
+                High-performance Python gateway enforcing write-gate API key validation and operator session security.
               </p>
             </div>
 
@@ -692,7 +691,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
             {/* Access */}
             <div>
-              <h5 className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-3">Dashboard</h5>
+              <h5 className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-3">Application</h5>
               <div className="space-y-2 text-xs">
                 <button
                   onClick={() => onNavigate('dashboard')}

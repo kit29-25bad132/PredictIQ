@@ -25,7 +25,8 @@ import {
   MaintenanceInputPayload,
   MachineInputPayload,
   FeedbackRecord,
-  FeedbackInputPayload
+  FeedbackInputPayload,
+  MachineSimulationConfig
 } from '../types';
 
 class PredictIQApiService {
@@ -304,13 +305,6 @@ class PredictIQApiService {
     return this.fetchJson<Prediction>(`/machines/${encodeURIComponent(machineId)}/prediction`);
   }
 
-  public async runDirectPrediction(data: SensorInputPayload): Promise<Prediction> {
-    return this.fetchOperatorJson<Prediction>('/predict', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
   // =========================================================================
   // 6. MAINTENANCE & FAILURE EVENT RECORDS (POSTGRESQL)
   // =========================================================================
@@ -383,6 +377,53 @@ class PredictIQApiService {
   public async getPredictions(machineId?: string): Promise<Prediction[]> {
     const query = machineId ? `?machine_id=${encodeURIComponent(machineId)}` : '';
     return this.fetchJson<Prediction[]>(`/predictions${query}`);
+  }
+
+  // =========================================================================
+  // 10. AI MAINTENANCE ASSISTANT LIVE CHAT (GEMINI POWERED)
+  // =========================================================================
+  public async chatWithAssistant(
+    message: string,
+    machineId?: string,
+    history?: { sender: 'user' | 'assistant'; text: string; timestamp?: string }[]
+  ): Promise<{ reply: string; machine_id?: string; timestamp: string; model?: string }> {
+    return this.fetchJson<{ reply: string; machine_id?: string; timestamp: string; model?: string }>(
+      '/assistant/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          message,
+          machine_id: machineId,
+          history: (history || []).map((h) => ({
+            sender: h.sender,
+            text: h.text,
+            timestamp: h.timestamp,
+          })),
+        }),
+      }
+    );
+  }
+
+  // =========================================================================
+  // 11. DIGITAL TWIN DYNAMIC SIMULATION CONFIGURATION
+  // =========================================================================
+  public async getSimulationConfig(machineId: string): Promise<MachineSimulationConfig> {
+    return this.fetchJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config`);
+  }
+
+  public async saveSimulationConfig(machineId: string, config: Partial<MachineSimulationConfig>): Promise<MachineSimulationConfig> {
+    // Mutation: backend requires a valid operator session cookie.
+    return this.fetchOperatorJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  public async resetSimulationConfig(machineId: string): Promise<MachineSimulationConfig> {
+    // Mutation: backend requires a valid operator session cookie.
+    return this.fetchOperatorJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config/reset`, {
+      method: 'POST',
+    });
   }
 }
 
