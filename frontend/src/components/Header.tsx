@@ -10,6 +10,8 @@ import {
   AlertOctagon,
   Volume2,
   VolumeX,
+  LogOut,
+  UserCircle2,
 } from 'lucide-react';
 import { useAlarm } from '../context/AlarmContext';
 
@@ -22,6 +24,10 @@ interface HeaderProps {
   onNavigateToAlerts: () => void;
   backendOnline: boolean;
   onRetryBackend: () => void;
+  /** Authenticated user's email (Phase 4 account menu). */
+  userEmail: string | null;
+  /** Supabase sign-out, then redirect to the public landing page. */
+  onSignOut: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -33,6 +39,8 @@ export const Header: React.FC<HeaderProps> = ({
   onNavigateToAlerts,
   backendOnline,
   onRetryBackend,
+  userEmail,
+  onSignOut,
 }) => {
   const { isAlarmActive, isAudioPlaying, isAudioMuted, muteAlarm, unmuteAlarm } = useAlarm();
 
@@ -156,6 +164,38 @@ export const Header: React.FC<HeaderProps> = ({
           <Plus className="h-3.5 w-3.5 stroke-[3]" />
           <span className="hidden sm:inline">Manual Input</span>
           <span className="sm:hidden">Input</span>
+        </button>
+
+        {/* Account Menu & Sign Out */}
+        <div
+          id="header-account-menu"
+          className="hidden items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 md:flex"
+          title={userEmail || 'Signed in'}
+        >
+          <UserCircle2 className="h-4 w-4 text-cyan-400" />
+          <span className="max-w-[160px] truncate text-[11px] font-semibold text-slate-300">
+            {userEmail || 'Signed in'}
+          </span>
+          <span className="h-3 w-px bg-slate-700" />
+          <button
+            id="btn-header-signout"
+            onClick={onSignOut}
+            title="Sign out of Predict IQ"
+            className="flex items-center gap-1 text-[11px] font-bold text-slate-400 hover:text-rose-400 transition-colors"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Sign out</span>
+          </button>
+        </div>
+
+        {/* Mobile sign-out icon */}
+        <button
+          id="btn-header-signout-mobile"
+          onClick={onSignOut}
+          title="Sign out"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-rose-500/40 hover:text-rose-400 transition-colors md:hidden"
+        >
+          <LogOut className="h-4 w-4" />
         </button>
 
         {/* Alerts Bell Notification */}
