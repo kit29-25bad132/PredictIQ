@@ -19,12 +19,44 @@ import ManualSensorModal from './components/ManualSensorModal';
 import AddMachineModal from './components/AddMachineModal';
 import { AlarmProvider, useAlarm } from './context/AlarmContext';
 import { SimulationProvider } from './context/SimulationContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import RequireAuth from './components/auth/RequireAuth';
+import { OrganizationPendingScreen } from './components/auth/AuthScreens';
+import SignInPage from './pages/auth/SignInPage';
+import SignUpPage from './pages/auth/SignUpPage';
+import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
+import ResetPasswordPage from './pages/auth/ResetPasswordPage';
+import AuthCallbackPage from './pages/auth/AuthCallbackPage';
+import { buildSignInPath, resolvePostSignInPath } from './lib/authGuard';
+import { isOrganizationAccessError } from './services/api';
 import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 
-type AppRoute = 'home' | 'workbench';
+type AppRoute =
+  | 'home'
+  | 'workbench'
+  | 'signin'
+  | 'signup'
+  | 'forgot-password'
+  | 'reset-password'
+  | 'auth-callback';
+
+const WORKBENCH_TABS: string[] = [
+  'dashboard',
+  '3d-view',
+  'machines',
+  'machine-details',
+  'monitoring',
+  'predictions',
+  'maintenance',
+  'alerts',
+  'feedback',
+  'sensor-data',
+  'settings',
+];
 
 function MainAppContent() {
   const { evaluateFleetTelemetry, isAlarmActive, isAudioMuted, muteAlarm } = useAlarm();
+  const { user, signOut } = useAuth();
 
   // Route State: 'home' | 'workbench'
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('home');
@@ -45,6 +77,8 @@ function MainAppContent() {
   const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
   const [backendOnline, setBackendOnline] = useState<boolean>(true);
   const [backendError, setBackendError] = useState<string | null>(null);
+  // Signed in, but with no organization membership yet (Phase 5 adds onboarding).
+  const [orgAccessPending, setOrgAccessPending] = useState<boolean>(false);
 
   // Modals
   const [isManualModalOpen, setIsManualModalOpen] = useState<boolean>(false);
@@ -81,6 +115,16 @@ function MainAppContent() {
       setCurrentRoute('workbench');
       const tabName = path.substring(1) as NavTab;
       setActiveTab(tabName);
+    } else if (path === '/signin' || path === '/login') {
+      setCurrentRoute('signin');
+    } else if (path === '/signup' || path === '/register') {
+      setCurrentRoute('signup');
+    } else if (path === '/forgot-password') {
+      setCurrentRoute('forgot-password');
+    } else if (path === '/reset-password') {
+      setCurrentRoute('reset-password');
+    } else if (path === '/auth/callback' || path === '/callback') {
+      setCurrentRoute('auth-callback');
     } else {
       setCurrentRoute('home');
     }
@@ -108,12 +152,45 @@ function MainAppContent() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [syncRouteFromPath]);
 
-  // Public edition: every route is reachable without sign-in. No auth redirects.
+  // Navigate to an arbitrary in-app path (auth pages, deep links).
+  const navigateToPath = useCallback(
+    (path: string) => {
+      const clean = (path.split('?')[0] || '/').toLowerCase();
+      const tab = clean.startsWith('/') ? clean.slice(1) : '';
+      if (WORKBENCH_TABS.includes(tab)) {
+        navigateTo('workbench', tab as NavTab);
+        return;
+      }
+      window.history.pushState({}, '', path);
+      syncRouteFromPath();
+    },
+    [navigateTo, syncRouteFromPath]
+  );
+
+  // Protected route asked us to send the visitor to sign-in (path preserved).
+  const handleAuthBlocked = useCallback(
+    (currentPath: string) => {
+      window.history.pushState({}, '', buildSignInPath(currentPath));
+      syncRouteFromPath();
+    },
+    [syncRouteFromPath]
+  );
+
+  // Successful sign-in: return to the originally requested destination.
+  const handleAuthSuccess = useCallback(() => {
+    navigateToPath(resolvePostSignInPath(window.location.search));
+  }, [navigateToPath]);
+
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+    navigateTo('home');
+  }, [signOut, navigateTo]);
 
   // Primary Fleet Data Fetcher
   const loadFleetData = useCallback(async () => {
+    if (orgAccessPending) return; // do not hammer a denied organization context
     try {
-      // 1. Health check
+      // 1. Health check (public endpoint, no credentials attached)
       try {
         await api.getHealth();
         setBackendOnline(true);
@@ -124,12 +201,19 @@ function MainAppContent() {
         setMachines([]);
       }
 
-      // 2. Fetch PostgreSQL fleet data
+      // 2. Fetch PostgreSQL fleet data (organization-scoped, user token attached)
       const [fetchedMachines, fetchedStats] = await Promise.all([
-        api.getMachines().catch(() => []),
-        api.getFleetStats().catch(() => null),
+        api.getMachines().catch((err) => {
+          if (isOrganizationAccessError(err)) throw err;
+          return [];
+        }),
+        api.getFleetStats().catch((err) => {
+          if (isOrganizationAccessError(err)) throw err;
+          return null;
+        }),
       ]);
 
+      setOrgAccessPending(false);
       setMachines(fetchedMachines);
       if (fetchedMachines.length > 0) {
         if (!selectedMachineId && fetchedMachines.length > 0) {
@@ -141,9 +225,15 @@ function MainAppContent() {
         setFleetStats(fetchedStats);
       }
     } catch (err: any) {
+      if (isOrganizationAccessError(err)) {
+        // Authenticated, but without organization membership: never a login failure.
+        setOrgAccessPending(true);
+        setMachines([]);
+        return;
+      }
       console.warn('Error synchronizing fleet data from PostgreSQL:', err.message || err);
     }
-  }, [selectedMachineId]);
+  }, [selectedMachineId, orgAccessPending]);
 
   // Initial Load
   useEffect(() => {
@@ -212,19 +302,43 @@ function MainAppContent() {
     }
   };
 
-  // Route 1: Public Landing Page
+  // Route 0: Authentication pages (public)
+  if (currentRoute === 'signin') {
+    return <SignInPage onNavigatePath={navigateToPath} onSuccess={handleAuthSuccess} />;
+  }
+  if (currentRoute === 'signup') {
+    return <SignUpPage onNavigatePath={navigateToPath} onSuccess={handleAuthSuccess} />;
+  }
+  if (currentRoute === 'forgot-password') {
+    return <ForgotPasswordPage onNavigatePath={navigateToPath} />;
+  }
+  if (currentRoute === 'reset-password') {
+    return <ResetPasswordPage onNavigatePath={navigateToPath} onSuccess={handleAuthSuccess} />;
+  }
+  if (currentRoute === 'auth-callback') {
+    return <AuthCallbackPage onNavigatePath={navigateToPath} onSuccess={handleAuthSuccess} />;
+  }
+
+  // Route 1: Public Landing Page (no authentication required)
   if (currentRoute === 'home') {
     return (
       <HomePage
         onNavigate={(dest) => {
           if (dest === 'dashboard') navigateTo('workbench', 'dashboard');
         }}
+        onSignIn={() => navigateToPath('/signin')}
       />
     );
   }
 
-  // Route 2: Public Industrial Workbench (no sign-in required)
+  // Signed in, but not (yet) a member of any organization.
+  if (orgAccessPending) {
+    return <OrganizationPendingScreen userEmail={user?.email ?? null} onSignOut={handleSignOut} />;
+  }
+
+  // Route 2: Private Industrial Workbench (authentication required)
   return (
+    <RequireAuth onBlocked={handleAuthBlocked}>
     <div id="predictiq-root" className="flex min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950">
       {/* Sidebar Navigation */}
       <Sidebar
@@ -250,6 +364,8 @@ function MainAppContent() {
           onNavigateToAlerts={() => handleSelectTab('alerts')}
           backendOnline={backendOnline}
           onRetryBackend={handleRetryBackend}
+          userEmail={user?.email ?? null}
+          onSignOut={handleSignOut}
         />
 
         {/* Mobile Navigation Trigger Bar */}
@@ -435,16 +551,19 @@ function MainAppContent() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }
 
 export function App() {
   return (
-    <AlarmProvider>
-      <SimulationProvider>
-        <MainAppContent />
-      </SimulationProvider>
-    </AlarmProvider>
+    <AuthProvider>
+      <AlarmProvider>
+        <SimulationProvider>
+          <MainAppContent />
+        </SimulationProvider>
+      </AlarmProvider>
+    </AuthProvider>
   );
 }
 

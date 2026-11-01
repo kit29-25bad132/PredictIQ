@@ -2,11 +2,18 @@
  * Predict IQ - Frontend API Service Layer (PostgreSQL Real-Data Integration)
  * Directly interfaces with FastAPI REST endpoints. Never fabricates or fakes data.
  *
- * Two request paths:
- *   - fetchJson:             read-only requests (no credentials)
- *   - fetchOperatorJson:     write requests via /api/operator/* (HttpOnly session cookie, credentials: 'include')
+ * Three request paths, strictly separated transports:
+ *   - fetchJson:         user requests. Attaches the Supabase access token
+ *                        (Authorization: Bearer) except for public endpoints
+ *                        (/health, /ready, /auth/*).
+ *   - fetchOperatorJson: /api/operator/* and operator-only mutations. Sends
+ *                        credentials: 'include' for the HttpOnly operator
+ *                        session cookie and NEVER a Supabase token.
+ *   - device auth:       X-API-Key is never present in browser code.
  *
- * Device auth (X-API-Key) is never sent from the browser.
+ * Token lifecycle: the provider/refresh handlers are injected once by
+ * AuthContext (no per-component credential logic). On a 401 the client performs
+ * at most ONE refresh-and-retry; 403/404 are surfaced as-is and never retried.
  */
 
 import {
@@ -29,10 +36,41 @@ import {
   MachineSimulationConfig
 } from '../types';
 
+/** HTTP error carrying the response status for correct UI handling. */
+export class ApiError extends Error {
+  public readonly status: number;
+
+  public constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/** Endpoints that must never carry a user token. */
+const PUBLIC_ENDPOINTS = ['/health', '/ready', '/auth/'];
+
+/**
+ * True when the backend denied access because the authenticated user has no
+ * organization membership yet (Phase 5 adds onboarding for this state). This is
+ * NOT a login failure and must never trigger a sign-out loop.
+ */
+export function isOrganizationAccessError(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  if (err.status === 403 && /no active organization membership/i.test(err.message)) return true;
+  if (err.status === 404 && /organization not found or access denied/i.test(err.message)) return true;
+  return false;
+}
+
 class PredictIQApiService {
   private baseUrl: string;
   private customApiUrl: string = '';
   private isOnline: boolean = true;
+
+  // Injected once by AuthContext (see setAuthTokenProvider & friends).
+  private authTokenProvider: (() => string | null) | null = null;
+  private refreshTokenHandler: (() => Promise<string | null>) | null = null;
+  private unauthorizedHandler: (() => void) | null = null;
 
   constructor() {
     const savedCustomUrl = typeof window !== 'undefined' ? localStorage.getItem('predictiq_custom_api') : null;
@@ -73,26 +111,91 @@ class PredictIQApiService {
     return this.isOnline;
   }
 
+  // =========================================================================
+  // AUTH CREDENTIAL WIRING (single place; no component attaches tokens)
+  // =========================================================================
+  public setAuthTokenProvider(provider: (() => string | null) | null): void {
+    this.authTokenProvider = provider;
+  }
+
+  public setRefreshTokenHandler(handler: (() => Promise<string | null>) | null): void {
+    this.refreshTokenHandler = handler;
+  }
+
+  public setUnauthorizedHandler(handler: (() => void) | null): void {
+    this.unauthorizedHandler = handler;
+  }
+
+  private shouldAttachUserToken(endpoint: string): boolean {
+    const path = endpoint.split('?')[0];
+    return !PUBLIC_ENDPOINTS.some((publicPath) => path === publicPath || path.startsWith(publicPath));
+  }
+
+  /**
+   * Perform a request with the user token attached (when applicable) and at
+   * most ONE refresh-and-retry on 401. The local `retried` flag makes retry
+   * loops impossible, and refresh is never attempted for public endpoints.
+   */
+  private async fetchWithAuthRetry(
+    url: string,
+    options: RequestInit,
+    attachToken: boolean
+  ): Promise<Response> {
+    const makeHeaders = (token: string | null): Record<string, string> => {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...((options.headers as Record<string, string>) || {}),
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      return headers;
+    };
+
+    const initialToken = attachToken && this.authTokenProvider ? this.authTokenProvider() : null;
+    let res = await fetch(url, { ...options, headers: makeHeaders(initialToken) });
+
+    let retried = false;
+    while (res.status === 401 && attachToken && !retried && this.refreshTokenHandler) {
+      retried = true;
+      const refreshed = await this.refreshTokenHandler();
+      if (!refreshed) break;
+      res = await fetch(url, { ...options, headers: makeHeaders(refreshed) });
+    }
+    return res;
+  }
+
+  private async toApiError(res: Response): Promise<ApiError> {
+    const errorBody = await res.json().catch(() => ({} as any));
+    const message =
+      errorBody.detail ||
+      errorBody.error ||
+      errorBody.message ||
+      `HTTP Error ${res.status}: ${res.statusText}`;
+    return new ApiError(typeof message === 'string' ? message : JSON.stringify(message), res.status);
+  }
+
   private async fetchJson<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
+    const attachToken = this.shouldAttachUserToken(endpoint);
     try {
-      const res = await fetch(url, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options?.headers,
-        },
-      });
+      const res = await this.fetchWithAuthRetry(url, options ?? {}, attachToken);
 
       if (!res.ok) {
-        const errorBody = await res.json().catch(() => ({}));
-        const message = errorBody.detail || errorBody.error || errorBody.message || `HTTP Error ${res.status}: ${res.statusText}`;
-        throw new Error(message);
+        const error = await this.toApiError(res);
+        // We reached the server: the backend is online even if it said no.
+        this.isOnline = true;
+        if (error.status === 401 && this.unauthorizedHandler) {
+          // Final 401 after the single refresh retry: session is dead.
+          this.unauthorizedHandler();
+        }
+        console.warn(`[Predict IQ API] ${error.status} for ${url}:`, error.message);
+        throw error;
       }
 
       this.isOnline = true;
       return await res.json();
     } catch (err: any) {
+      if (err instanceof ApiError) throw err;
+      // Network-level failure only (DNS, CORS, offline, abort).
       this.isOnline = false;
       console.warn(`[Predict IQ API] Request failed for ${url}:`, err.message || err);
       throw err;
@@ -107,6 +210,7 @@ class PredictIQApiService {
   private async fetchOperatorJson<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     try {
+      // Operator transport: HttpOnly session cookie only, never a Supabase JWT.
       const res = await fetch(url, {
         ...options,
         credentials: 'include',
@@ -117,14 +221,16 @@ class PredictIQApiService {
       });
 
       if (!res.ok) {
-        const errorBody = await res.json().catch(() => ({}));
-        const message = errorBody.detail || errorBody.error || errorBody.message || `HTTP Error ${res.status}: ${res.statusText}`;
-        throw new Error(message);
+        const error = await this.toApiError(res);
+        this.isOnline = true;
+        console.warn(`[Predict IQ API] Operator ${error.status} for ${url}:`, error.message);
+        throw error;
       }
 
       this.isOnline = true;
       return await res.json();
     } catch (err: any) {
+      if (err instanceof ApiError) throw err;
       this.isOnline = false;
       console.warn(`[Predict IQ API] Operator request failed for ${url}:`, err.message || err);
       throw err;
@@ -172,6 +278,8 @@ class PredictIQApiService {
     try {
       return await this.fetchJson<FleetStats>('/stats');
     } catch (err) {
+      // Organization denials must reach the caller (not be masked as zeros).
+      if (isOrganizationAccessError(err)) throw err;
       return {
         total_machines: 0,
         total_devices: 0,

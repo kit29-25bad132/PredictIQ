@@ -27,9 +27,11 @@ import {
 
 interface HomePageProps {
   onNavigate: (route: 'dashboard') => void;
+  /** Public landing page stays reachable without sign-in; this opens /signin. */
+  onSignIn: () => void;
 }
 
-export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
+export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onSignIn }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const scrollToSection = (id: string) => {
@@ -210,6 +212,13 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
           {/* Action CTAs */}
           <div className="hidden md:flex items-center gap-3">
             <button
+              id="btn-nav-signin"
+              onClick={onSignIn}
+              className="flex items-center gap-2 rounded-xl border border-slate-700/80 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-slate-200 hover:border-cyan-500/40 hover:bg-slate-800 transition-all"
+            >
+              <span>Sign In</span>
+            </button>
+            <button
               id="btn-nav-dashboard"
               onClick={() => onNavigate('dashboard')}
               className="flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
@@ -267,6 +276,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
               </button>
 
               <div className="border-t border-slate-800 pt-3 flex flex-col gap-2">
+                <button
+                  id="btn-mobile-signin"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    onSignIn();
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 py-2.5 text-xs font-semibold text-slate-200"
+                >
+                  <span>Sign In</span>
+                </button>
                 <button
                   onClick={() => onNavigate('dashboard')}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-500 py-2.5 text-xs font-bold text-slate-950"
