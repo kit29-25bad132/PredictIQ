@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     operator_session_secret: str = ""
     operator_session_ttl_seconds: int = 86400
 
+    # Supabase Auth (user identity verification only).
+    # Verification uses the project's PUBLIC JWKS; no service-role key, anon
+    # key or JWT secret is read here. Empty SUPABASE_URL/SUPABASE_JWKS_URL
+    # disables user authentication: endpoints that require it fail closed (503).
+    supabase_url: str = ""
+    supabase_jwks_url: str = ""
+    supabase_jwt_issuer: str = ""
+    supabase_jwt_audience: str = "authenticated"
+    supabase_jwks_cache_seconds: int = 3600
+    supabase_jwt_leeway_seconds: int = 30
+
     # External AI provider (Gemini). Both fail closed: with no key the analyze
     # endpoint returns an explicit configuration error and never fabricates a
     # prediction. The key never enters source code or logs.
@@ -84,6 +95,24 @@ class Settings(BaseSettings):
     telemetry_current_max: float = 1000.0
     telemetry_rpm_min: float = 0.0
     telemetry_rpm_max: float = 60000.0
+
+    @property
+    def supabase_jwks_url_effective(self) -> str:
+        """Explicit SUPABASE_JWKS_URL, else derived from SUPABASE_URL."""
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        if self.supabase_url:
+            return self.supabase_url.rstrip("/") + "/auth/v1/.well-known/jwks.json"
+        return ""
+
+    @property
+    def supabase_jwt_issuer_effective(self) -> str:
+        """Explicit SUPABASE_JWT_ISSUER, else derived from SUPABASE_URL."""
+        if self.supabase_jwt_issuer:
+            return self.supabase_jwt_issuer
+        if self.supabase_url:
+            return self.supabase_url.rstrip("/") + "/auth/v1"
+        return ""
 
     @property
     def database_url_effective(self) -> str:
