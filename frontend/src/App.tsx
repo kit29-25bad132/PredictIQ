@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Machine, FleetStats, FeedbackContext } from './types';
 import api from './services/api';
 import Sidebar, { NavTab } from './components/Sidebar';
@@ -21,13 +21,14 @@ import { AlarmProvider, useAlarm } from './context/AlarmContext';
 import { SimulationProvider } from './context/SimulationContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import RequireAuth from './components/auth/RequireAuth';
-import { OrganizationPendingScreen } from './components/auth/AuthScreens';
+import { WorkspaceInitializingScreen, WorkspaceSetupErrorScreen } from './components/auth/AuthScreens';
 import SignInPage from './pages/auth/SignInPage';
 import SignUpPage from './pages/auth/SignUpPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage';
 import AuthCallbackPage from './pages/auth/AuthCallbackPage';
 import { buildSignInPath, resolvePostSignInPath } from './lib/authGuard';
+import { isCurrentOrganizationRequest } from './lib/organizationState';
 import { isOrganizationAccessError } from './services/api';
 import { Menu, AlertOctagon, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 
@@ -56,7 +57,7 @@ const WORKBENCH_TABS: string[] = [
 
 function MainAppContent() {
   const { evaluateFleetTelemetry, isAlarmActive, isAudioMuted, muteAlarm } = useAlarm();
-  const { user, signOut } = useAuth();
+  const { user, signOut, workspace, workspaceLoading, workspaceError, retryWorkspace } = useAuth();
 
   // Route State: 'home' | 'workbench'
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('home');
@@ -77,8 +78,16 @@ function MainAppContent() {
   const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
   const [backendOnline, setBackendOnline] = useState<boolean>(true);
   const [backendError, setBackendError] = useState<string | null>(null);
-  // Signed in, but with no organization membership yet (Phase 5 adds onboarding).
+  // Backend denial remains authoritative; the workspace context also gates loading.
   const [orgAccessPending, setOrgAccessPending] = useState<boolean>(false);
+  const workspaceRequestGeneration = useRef(0);
+
+  useEffect(() => {
+    workspaceRequestGeneration.current += 1;
+    setMachines([]);
+    setSelectedMachineId('');
+    setOrgAccessPending(false);
+  }, [workspace?.id]);
 
   // Modals
   const [isManualModalOpen, setIsManualModalOpen] = useState<boolean>(false);
@@ -188,14 +197,21 @@ function MainAppContent() {
 
   // Primary Fleet Data Fetcher
   const loadFleetData = useCallback(async () => {
-    if (orgAccessPending) return; // do not hammer a denied organization context
+    if (orgAccessPending || workspaceLoading || !workspace) return;
+    const requestGeneration = workspaceRequestGeneration.current;
+    const organizationId = workspace.id;
+    const isCurrentWorkspace = () => isCurrentOrganizationRequest(
+      requestGeneration, workspaceRequestGeneration.current, organizationId, workspace.id,
+    );
     try {
       // 1. Health check (public endpoint, no credentials attached)
       try {
         await api.getHealth();
+        if (!isCurrentWorkspace()) return;
         setBackendOnline(true);
         setBackendError(null);
       } catch (err: any) {
+        if (!isCurrentWorkspace()) return;
         setBackendOnline(false);
         setBackendError(err.message || 'FastAPI service unreachable');
         setMachines([]);
@@ -212,6 +228,8 @@ function MainAppContent() {
           return null;
         }),
       ]);
+
+      if (!isCurrentWorkspace()) return;
 
       setOrgAccessPending(false);
       setMachines(fetchedMachines);
@@ -233,7 +251,7 @@ function MainAppContent() {
       }
       console.warn('Error synchronizing fleet data from PostgreSQL:', err.message || err);
     }
-  }, [selectedMachineId, orgAccessPending]);
+  }, [selectedMachineId, orgAccessPending, workspaceLoading, workspace]);
 
   // Initial Load
   useEffect(() => {
@@ -302,6 +320,13 @@ function MainAppContent() {
     }
   };
 
+  // Retry both the workspace handshake and the tenant-scoped data load.
+  const handleRetryWorkspace = useCallback(() => {
+    setOrgAccessPending(false);
+    retryWorkspace();
+    loadFleetData();
+  }, [retryWorkspace, loadFleetData]);
+
   // Route 0: Authentication pages (public)
   if (currentRoute === 'signin') {
     return <SignInPage onNavigatePath={navigateToPath} onSuccess={handleAuthSuccess} />;
@@ -331,14 +356,18 @@ function MainAppContent() {
     );
   }
 
-  // Signed in, but not (yet) a member of any organization.
-  if (orgAccessPending) {
-    return <OrganizationPendingScreen userEmail={user?.email ?? null} onSignOut={handleSignOut} />;
-  }
-
   // Route 2: Private Industrial Workbench (authentication required)
   return (
     <RequireAuth onBlocked={handleAuthBlocked}>
+    {orgAccessPending || workspaceError ? (
+      <WorkspaceSetupErrorScreen
+        message={workspaceError || 'Your workspace access could not be restored.'}
+        onRetry={handleRetryWorkspace}
+        onSignOut={handleSignOut}
+      />
+    ) : !workspace || workspaceLoading ? (
+      <WorkspaceInitializingScreen />
+    ) : (
     <div id="predictiq-root" className="flex min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950">
       {/* Sidebar Navigation */}
       <Sidebar
@@ -551,6 +580,7 @@ function MainAppContent() {
         </div>
       )}
     </div>
+    )}
     </RequireAuth>
   );
 }

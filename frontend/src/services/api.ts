@@ -47,6 +47,14 @@ export class ApiError extends Error {
   }
 }
 
+export interface OrganizationSummary {
+  id: string;
+  name: string;
+  slug: string;
+  role: 'owner' | 'admin' | 'member';
+  status: 'active' | 'suspended' | 'archived';
+}
+
 /** Endpoints that must never carry a user token. */
 const PUBLIC_ENDPOINTS = ['/health', '/ready', '/auth/'];
 
@@ -71,6 +79,7 @@ class PredictIQApiService {
   private authTokenProvider: (() => string | null) | null = null;
   private refreshTokenHandler: (() => Promise<string | null>) | null = null;
   private unauthorizedHandler: (() => void) | null = null;
+  private organizationId: string | null = null;
 
   constructor() {
     const savedCustomUrl = typeof window !== 'undefined' ? localStorage.getItem('predictiq_custom_api') : null;
@@ -126,6 +135,8 @@ class PredictIQApiService {
     this.unauthorizedHandler = handler;
   }
 
+  public setOrganizationId(id: string | null): void { this.organizationId = id; }
+
   private shouldAttachUserToken(endpoint: string): boolean {
     const path = endpoint.split('?')[0];
     return !PUBLIC_ENDPOINTS.some((publicPath) => path === publicPath || path.startsWith(publicPath));
@@ -147,6 +158,7 @@ class PredictIQApiService {
         ...((options.headers as Record<string, string>) || {}),
       };
       if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (token && attachToken && this.organizationId) headers['X-Organization-Id'] = this.organizationId;
       return headers;
     };
 
@@ -235,6 +247,29 @@ class PredictIQApiService {
       console.warn(`[Predict IQ API] Operator request failed for ${url}:`, err.message || err);
       throw err;
     }
+  }
+
+  public async listOrganizations(): Promise<OrganizationSummary[]> {
+    return this.fetchJson<OrganizationSummary[]>('/organizations');
+  }
+
+  public async createOrganization(name: string, slug: string): Promise<OrganizationSummary> {
+    return this.fetchJson<OrganizationSummary>('/organizations', {
+      method: 'POST',
+      body: JSON.stringify({ name, slug }),
+    });
+  }
+
+  /**
+   * Idempotent workspace initialization. Identity is taken from the attached
+   * Supabase token; the optional saved selection is only a request hint and is
+   * re-verified against membership by the backend.
+   */
+  public async initializeWorkspace(savedWorkspaceId?: string | null): Promise<OrganizationSummary> {
+    return this.fetchJson<OrganizationSummary>('/organizations/ensure', {
+      method: 'POST',
+      ...(savedWorkspaceId ? { headers: { 'X-Organization-Id': savedWorkspaceId } } : {}),
+    });
   }
 
   // =========================================================================

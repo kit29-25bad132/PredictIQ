@@ -56,7 +56,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({ onNavigatePath, onSucces
   return (
     <AuthCard
       title="Sign in to Predict IQ"
-      subtitle="Access your organization's fleet workbench."
+      subtitle="Access your fleet workbench."
       footer={
         <span>
           New to Predict IQ?{' '}

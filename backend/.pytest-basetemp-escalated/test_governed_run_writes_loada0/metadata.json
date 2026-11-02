@@ -1,0 +1,67 @@
+{
+  "artifact": "model.joblib",
+  "dataset_fingerprint": "c508ea943bdde0bb",
+  "dataset_size": 12,
+  "dataset_version": "feedback-v1",
+  "deployment_status": "candidate",
+  "eval_date": "2026-11-01T15:46:29.776461+00:00",
+  "evaluation_dataset_size": 3,
+  "evaluation_status": "evaluated",
+  "features": [
+    "failure_probability",
+    "shap_temperature",
+    "shap_vibration",
+    "shap_current",
+    "shap_rpm",
+    "max_temp",
+    "max_vibration",
+    "rated_current",
+    "rated_rpm"
+  ],
+  "label_negative": 6,
+  "label_positive": 6,
+  "metrics": {
+    "accuracy": 1.0,
+    "confusion_matrix": {
+      "labels": [
+        0,
+        1
+      ],
+      "matrix": [
+        [
+          2,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ]
+    },
+    "f1": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "support": 3
+  },
+  "model_version": "grounded-rf-v20261101_154629",
+  "random_state": 42,
+  "test_sample_ids": [
+    "feedback-7",
+    "feedback-4",
+    "feedback-6"
+  ],
+  "test_size": 0.25,
+  "train_dataset_size": 9,
+  "train_sample_ids": [
+    "feedback-10",
+    "feedback-12",
+    "feedback-9",
+    "feedback-1",
+    "feedback-2",
+    "feedback-5",
+    "feedback-3",
+    "feedback-8",
+    "feedback-11"
+  ],
+  "training_timestamp": "2026-11-01T15:46:29.776461+00:00"
+}
