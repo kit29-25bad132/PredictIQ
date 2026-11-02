@@ -2,8 +2,10 @@
  * Predict IQ - Centralized authentication context.
  *
  * Owns exactly one AuthSessionManager (one session listener, restored on
- * startup) and wires the API service to the current access token so no
- * component ever attaches credentials itself.
+ * startup) and one WorkspaceInitializer. Authentication and workspace
+ * initialization are a single controlled flow: the app is only ready once the
+ * backend has confirmed the user's workspace, and no tenant-scoped request is
+ * issued before that.
  */
 
 import React, {
@@ -17,7 +19,9 @@ import React, {
 } from 'react';
 import { AuthResult, AuthSessionManager, AuthStatus, AuthUser } from '../lib/authSession';
 import { getSupabase, getSupabaseConfigError, SUPABASE_CONFIG_ERROR } from '../lib/supabaseClient';
-import api from '../services/api';
+import api, { OrganizationSummary } from '../services/api';
+import { WorkspaceInitializer } from '../lib/workspaceInit';
+import type { WorkspaceState } from '../lib/workspaceInit';
 
 interface AuthContextValue {
   status: AuthStatus;
@@ -31,9 +35,22 @@ interface AuthContextValue {
   requestPasswordReset: (email: string) => Promise<AuthResult>;
   updatePassword: (password: string) => Promise<AuthResult>;
   exchangeCode: (code: string) => Promise<AuthResult>;
+  /** The single authoritative workspace for this session. */
+  workspace: OrganizationSummary | null;
+  workspaceStatus: WorkspaceState['status'];
+  workspaceLoading: boolean;
+  workspaceError: string | null;
+  retryWorkspace: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+/** Non-browser fallback (SSR/unit tests): keeps the initializer DOM-free. */
+const memoryStorage = {
+  getItem: (_key: string) => null,
+  setItem: (_key: string, _value: string) => undefined,
+  removeItem: (_key: string) => undefined,
+};
 
 function buildRedirectUrl(path: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -41,35 +58,58 @@ function buildRedirectUrl(path: string): string {
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const configError = getSupabaseConfigError();
   const managerRef = useRef<AuthSessionManager | null>(null);
-  const [status, setStatus] = useState<AuthStatus>('loading');
-  const [user, setUser] = useState<AuthUser | null>(null);
-
-  if (managerRef.current === null && !configError) {
+  if (managerRef.current === null) {
+    // Creates (and caches) the Supabase client; sets the module config error
+    // when the public environment values are missing.
     const supabase = getSupabase();
     if (supabase) {
       managerRef.current = new AuthSessionManager(supabase as any);
     }
   }
-
   const manager = managerRef.current;
+  const configError = getSupabaseConfigError();
+
+  const initializerRef = useRef<WorkspaceInitializer | null>(null);
+  if (initializerRef.current === null) {
+    initializerRef.current = new WorkspaceInitializer({
+      getUserId: () => managerRef.current?.getUser()?.id ?? null,
+      fetchWorkspace: (savedWorkspaceId) => api.initializeWorkspace(savedWorkspaceId),
+      selectWorkspace: (id) => api.setOrganizationId(id),
+      storage: typeof window !== 'undefined' ? window.localStorage : memoryStorage,
+    });
+  }
+  const initializer = initializerRef.current;
+
+  const [status, setStatus] = useState<AuthStatus>('loading');
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [workspaceState, setWorkspaceState] = useState<WorkspaceState>({
+    status: 'idle',
+    workspace: null,
+    error: null,
+  });
+
+  useEffect(() => initializer.subscribe(setWorkspaceState), [initializer]);
 
   useEffect(() => {
     if (!manager) return;
 
+    // Wire credentials BEFORE the first auth event can trigger workspace
+    // initialization, so the initialization request carries the user token.
+    api.setAuthTokenProvider(() => manager.getAccessToken());
+    api.setRefreshTokenHandler(() => manager.refreshAccessToken());
+    api.setUnauthorizedHandler(() => {
+      manager.invalidateSession();
+    });
+
     manager.start();
+
     const unsubscribe = manager.subscribe((nextStatus, nextUser) => {
       setStatus(nextStatus);
       setUser(nextUser);
-    });
-
-    // Single place where API credentials are attached (no per-component logic).
-    api.setAuthTokenProvider(() => manager.getAccessToken());
-    api.setRefreshTokenHandler(() => manager.refreshAccessToken());
-    // A final 401 after the single refresh retry means the session is dead.
-    api.setUnauthorizedHandler(() => {
-      manager.invalidateSession();
+      // Single trigger for every auth transition: sign-in, sign-up, OAuth
+      // callback, restored session, token loss, sign-out.
+      void initializer.sync();
     });
 
     return () => {
@@ -77,8 +117,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       api.setAuthTokenProvider(null);
       api.setRefreshTokenHandler(null);
       api.setUnauthorizedHandler(null);
+      initializer.reset();
     };
-  }, [manager]);
+  }, [manager, initializer]);
 
   const signIn = useCallback(
     (email: string, password: string) =>
@@ -102,10 +143,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [manager]
   );
 
-  const signOut = useCallback(
-    () => (manager ? manager.signOut() : Promise.resolve({ ok: true })),
-    [manager]
-  );
+  const signOut = useCallback(async () => {
+    const result = manager ? await manager.signOut() : { ok: true };
+    // Explicit clear in addition to the auth-event reset, so workspace state
+    // can never survive a failed sign-out call.
+    initializer.reset();
+    return result;
+  }, [manager, initializer]);
 
   const requestPasswordReset = useCallback(
     (email: string) =>
@@ -129,6 +173,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [manager]
   );
 
+  const retryWorkspace = useCallback(() => {
+    void initializer.retry();
+  }, [initializer]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -142,6 +190,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       requestPasswordReset,
       updatePassword,
       exchangeCode,
+      workspace: workspaceState.workspace,
+      workspaceStatus: workspaceState.status,
+      workspaceLoading: workspaceState.status === 'loading',
+      workspaceError: workspaceState.error,
+      retryWorkspace,
     }),
     [
       status,
@@ -155,6 +208,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       requestPasswordReset,
       updatePassword,
       exchangeCode,
+      workspaceState,
+      retryWorkspace,
     ]
   );
 

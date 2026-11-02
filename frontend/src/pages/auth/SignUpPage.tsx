@@ -194,8 +194,8 @@ export const SignUpPage: React.FC<SignUpPageProps> = ({ onNavigatePath, onSucces
       <p className="mt-5 flex items-start gap-2 text-[11px] leading-relaxed text-slate-500">
         <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
         <span>
-          Email verification is required. New accounts start with no organization membership until setup
-          is completed — existing organizations are never joined automatically.
+          Email verification is required before you can sign in. Your workbench is created automatically
+          the first time you sign in — no extra setup steps.
         </span>
       </p>
     </AuthCard>
