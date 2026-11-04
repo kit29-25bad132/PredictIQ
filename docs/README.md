@@ -1,1205 +1,603 @@
 # PredictIQ
+## Evidence-Grounded Multimodal Intelligence for Predictive Maintenance
 
-## AIoT Predictive Maintenance Platform
+> **Machines generate signals. PredictIQ turns those signals into evidence technicians can understand and act on.**
 
-PredictIQ is a production-oriented IoT predictive-maintenance system that collects machine telemetry, stores real sensor data, evaluates machine health, generates AI-assisted failure predictions, raises maintenance alerts, and exposes machine state through a web dashboard.
+PredictIQ is an IoT predictive-maintenance system that connects machine telemetry, deterministic condition analysis, and Meta AI-powered interaction to help technicians investigate abnormal machine behaviour.
 
-The V1 architecture separates device telemetry, transport, backend processing, persistence, AI inference, and frontend visualization.
+Built for the **Meta Global AI Developer Hackathon — Push the Frontier | Indie Developer Track**, PredictIQ explores a practical frontier: bringing multimodal AI into a physical-system workflow without allowing a language model to invent sensor readings, replace engineering logic, or make unverified maintenance decisions.
 
-> **V1 status:** Release-ready prototype with real cloud infrastructure, real database persistence, real Gemini inference, real telemetry flow, and a cloud-hosted frontend.
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Core Capabilities](#core-capabilities)
-- [Architecture](#architecture)
-- [Data Flow](#data-flow)
-- [Technology Stack](#technology-stack)
-- [Repository Structure](#repository-structure)
-- [Telemetry](#telemetry)
-- [Health and Prediction Architecture](#health-and-prediction-architecture)
-- [AI / Gemini Integration](#ai--gemini-integration)
-- [Alerts and Maintenance](#alerts-and-maintenance)
-- [Device Heartbeat and Offline Detection](#device-heartbeat-and-offline-detection)
-- [Wokwi Development Path](#wokwi-development-path)
-- [Frontend](#frontend)
-- [Backend API](#backend-api)
-- [Database](#database)
-- [Security](#security)
-- [Environment Configuration](#environment-configuration)
-- [Local Development](#local-development)
-- [Testing and Verification](#testing-and-verification)
-- [Production Deployment](#production-deployment)
-- [Cloud Independence](#cloud-independence)
-- [Current V1 Scope](#current-v1-scope)
-- [Known V1 Limitations](#known-v1-limitations)
-- [Future Extension](#future-extension)
-- [Project Principles](#project-principles)
-- [License](#license)
+**The central idea:** deterministic systems establish what the machine data says; Meta AI helps people investigate, interpret, and interact with that evidence.
 
 ---
 
-## Overview
+## At a glance
 
-PredictIQ demonstrates an end-to-end predictive-maintenance workflow for connected industrial equipment.
-
-The system receives telemetry containing measurements such as:
-
-- Temperature
-- Vibration
-- Electrical current
-- RPM
-- Device ID
-- Machine ID
-- Timestamp
-- Telemetry source
-
-Telemetry is persisted in PostgreSQL and is used by the backend health engine and prediction services.
-
-The platform supports two prediction paths:
-
-1. **Deterministic health/prediction logic** using the V1 physics/rule-based engine.
-2. **External AI analysis** using Google's Gemini API.
-
-This separation is intentional. Deterministic health logic provides a predictable baseline, while Gemini provides contextual analysis based on the actual telemetry supplied to the inference request.
-
----
-
-## Core Capabilities
-
-- Real Wokwi ESP32-S3 telemetry
-- Real PostgreSQL persistence through Supabase
-- Cloud FastAPI backend on Render
-- Gemini AI analysis
-- Structured and explainable predictions
-- Machine health monitoring
-- Threshold-based alert generation
-- Device heartbeat and offline detection
-- Failure/recovery handling
-- Maintenance records
-- Prediction feedback
-- React/Vite web dashboard
-- Vercel cloud deployment
-- HTTPS cloud transport
-- CORS protection
-- Dockerized backend runtime
-- Environment-based secret management
-
----
-
-## Architecture
-
-```text
-                    ┌───────────────────────────┐
-                    │       Wokwi ESP32-S3      │
-                    │     Simulated IoT Device   │
-                    └─────────────┬─────────────┘
-                                  │
-                         HTTP inside Wokwi
-                                  │
-                                  ▼
-                    ┌───────────────────────────┐
-                    │     Local Wokwi Gateway    │
-                    │      Development Only      │
-                    └─────────────┬─────────────┘
-                                  │
-                       HTTPS + verified TLS
-                                  │
-                                  ▼
-                    ┌───────────────────────────┐
-                    │      Render Backend       │
-                    │ FastAPI + Uvicorn + Docker │
-                    └─────────────┬─────────────┘
-                                  │
-                                  ▼
-                    ┌───────────────────────────┐
-                    │   Supabase PostgreSQL     │
-                    │      Persistent Data       │
-                    └─────────────┬─────────────┘
-                                  │
-                       AI analysis when requested
-                                  │
-                                  ▼
-                    ┌───────────────────────────┐
-                    │      Google Gemini        │
-                    │     Gemini 3.6 Flash      │
-                    └─────────────┬─────────────┘
-                                  │
-                                  ▼
-                    ┌───────────────────────────┐
-                    │     Predictions / XAI     │
-                    │ Alerts / Maintenance /    │
-                    │ Feedback / Machine State   │
-                    └─────────────┬─────────────┘
-                                  │
-                                  ▼
-                    ┌───────────────────────────┐
-                    │     Vercel Frontend       │
-                    │       React + Vite        │
-                    └───────────────────────────┘
-```
-
-### Architectural boundary
-
-The local gateway is a **development transport adapter** for Wokwi. It is not the production database, AI service, or business-logic layer.
-
-The production web application remains cloud-hosted:
-
-```text
-Vercel → Render → Supabase
-```
-
-The development device path is:
-
-```text
-Wokwi → Local Gateway → Render
-```
-
----
-
-## Data Flow
-
-### Telemetry
-
-```text
-ESP32-S3
-   │
-   │ real simulated sensor values
-   ▼
-Wokwi networking
-   │
-   ▼
-Local PredictIQ Gateway
-   │
-   │ HTTPS
-   ▼
-Render FastAPI backend
-   │
-   ├── validate telemetry
-   ├── persist SensorReading
-   ├── update machine/device state
-   ├── evaluate health rules
-   └── generate alerts when thresholds require them
-   │
-   ▼
-Supabase PostgreSQL
-```
-
-### AI prediction
-
-```text
-Latest persisted telemetry
-        │
-        ▼
-Prediction service
-        │
-        ├── build inference input
-        ├── calculate SHA-256 input hash
-        └── call Gemini
-                │
-                ▼
-        Gemini 3.6 Flash
-                │
-                ▼
-        Structured prediction
-                │
-                ▼
-        PostgreSQL prediction row
-```
-
----
-
-## Technology Stack
-
-| Layer | Technology |
+| | |
 |---|---|
-| Device simulation | Wokwi |
-| Microcontroller target | ESP32-S3-DevKitC-1 |
-| Firmware | C++ / Arduino |
-| Firmware build | PlatformIO |
-| Device transport adapter | Python / FastAPI |
-| Backend | Python / FastAPI |
-| ASGI server | Uvicorn |
-| Backend container | Docker |
-| Production backend hosting | Render |
-| Database | PostgreSQL |
-| Database hosting | Supabase |
-| AI provider | Google Gemini |
-| AI model | `gemini-3.6-flash` |
-| Frontend | React |
-| Frontend tooling | Vite |
-| Frontend hosting | Vercel |
-| API communication | HTTPS / JSON |
-| Gateway-to-backend | HTTPS |
-| Wokwi-to-gateway | HTTP |
+| Project | PredictIQ |
+| Hackathon | Meta Global AI Developer Hackathon |
+| Track | Indie Developer |
+| Problem statement | Push the Frontier |
+| Domain | Manufacturing, industrial IoT, predictive maintenance |
+| Core workflow | Sense → Validate → Analyse → Explain → Investigate → Act |
+| Primary system | ESP32-S3 / Wokwi, FastAPI, PostgreSQL, web dashboard |
+| Meta AI role | Evidence-grounded multimodal interaction and technician assistance |
+| Repository | **[ADD PUBLIC GITHUB URL]** |
+| Demo | **[ADD 3-MINUTE DEMO VIDEO URL]** |
+| Live application | **[ADD DEPLOYED APPLICATION URL, IF AVAILABLE]** |
+| Developer | **[ADD YOUR NAME / HANDLE]** |
+
+> Replace every `[ADD ...]` field before submitting. Remove any feature from the implemented list if it is not working in the submitted commit.
 
 ---
 
-## Repository Structure
+## The problem
 
-```text
-PredictIQ/
-│
-├── .github/
-│   ├── workflows/
-│   │   └── ci.yml
-│   └── copilot-instructions.md
-│
-├── .harness/
-│   ├── pg_tls_proxy.py
-│   ├── phase05_app.py
-│   └── run_migrations.py
-│
-├── audit/
-│   └── projectv0/
-│       └── predict-iq/
-│           └── V0 frozen reference
-│
-├── backend/
-│   ├── alembic/
-│   │   ├── env.py
-│   │   └── versions/
-│   │       ├── 001-006 migration files
-│   │       └── ...
-│   │
-│   ├── app/
-│   │   ├── api/
-│   │   │   ├── sensors.py
-│   │   │   ├── machines.py
-│   │   │   ├── alerts.py
-│   │   │   ├── predictions.py
-│   │   │   ├── maintenance.py
-│   │   │   ├── feedback.py
-│   │   │   └── health.py
-│   │   │
-│   │   ├── core/
-│   │   │   ├── config.py
-│   │   │   └── auth.py
-│   │   │
-│   │   ├── db/
-│   │   │   ├── database.py
-│   │   │   └── models.py
-│   │   │
-│   │   ├── schemas/
-│   │   │   └── sensor.py
-│   │   │
-│   │   ├── services/
-│   │   │   ├── health_engine.py
-│   │   │   ├── prediction_service.py
-│   │   │   └── model_evaluation.py
-│   │   │
-│   │   └── main.py
-│   │
-│   ├── tests/
-│   │   ├── test_*.py
-│   │   └── ...
-│   │
-│   ├── .env.example
-│   ├── alembic.ini
-│   ├── pytest.ini
-│   └── requirements.txt
-│
-├── frontend/
-│   ├── public/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   │   ├── DashboardPage.tsx
-│   │   │   ├── MachinesPage.tsx
-│   │   │   ├── MachineDetailsPage.tsx
-│   │   │   ├── LiveMonitoringPage.tsx
-│   │   │   ├── AlertsPage.tsx
-│   │   │   ├── MaintenancePage.tsx
-│   │   │   ├── PredictionsPage.tsx
-│   │   │   ├── SensorDataPage.tsx
-│   │   │   ├── SettingsPage.tsx
-│   │   │   └── FeedbackPage.tsx
-│   │   └── ...
-│   │
-│   ├── package.json
-│   ├── package-lock.json
-│   ├── tsconfig.json
-│   └── ...
-│
-├── firmware/
-│   │
-│   ├── esp32/
-│   │   ├── predict_iq_esp32.ino
-│   │   ├── config.h
-│   │   ├── sensors.h
-│   │   ├── sensors.cpp
-│   │   ├── api_client.h
-│   │   ├── api_client.cpp
-│   │   ├── wifi_manager.h
-│   │   ├── wifi_manager.cpp
-│   │   ├── platformio.ini
-│   │   └── README.md
-│   │
-│   └── wokwi/
-│       ├── diagram.json
-│       ├── platformio.ini
-│       ├── wokwi.toml
-│       ├── src/
-│       │   ├── main.cpp
-│       │   ├── config.h
-│       │   ├── sensors.h
-│       │   ├── sensors.cpp
-│       │   ├── api_client.h
-│       │   ├── api_client.cpp
-│       │   ├── wifi_manager.h
-│       │   └── wifi_manager.cpp
-│       ├── README.md
-│       └── wokwi-debug.txt
-│
-├── ml/
-│   ├── __init__.py
-│   ├── prediction.py
-│   ├── train.py
-│   ├── data_validation.py
-│   ├── feature_engineering.py
-│   ├── explainability.py
-│   ├── recommendation.py
-│   └── models/
-│       ├── __init__.py
-│       └── README.md
-│
-├── deploy/
-│   ├── gateway/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── Dockerfile
-│   │   ├── requirements.txt
-│   │   ├── .env.example
-│   │   ├── README.md
-│   │   ├── DEPLOY-GUIDE.md
-│   │   └── tests/
-│   │       ├── __init__.py
-│   │       └── test_gateway.py
-│   │
-│   ├── docker-compose.yml
-│   ├── Dockerfile
-│   ├── Dockerfile.backend
-│   ├── entrypoint.sh
-│   ├── .env.example
-│   ├── README.md
-│   ├── TLS_SETUP.md
-│   └── DEMO_SCENARIOS.md
-│
-├── docs/
-│   ├── 00-PROJECT-CHARTER.md
-│   ├── 01-ARCHITECTURE.md
-│   ├── 02-FEATURES.md
-│   ├── 03-DATA-AND-FEEDBACK.md
-│   ├── 04-IMPLEMENTATION-ROADMAP.md
-│   ├── 05-API-CONTRACT.md
-│   ├── 06-AI-AND-ML-STRATEGY.md
-│   ├── 07-GITHUB-WORKFLOW.md
-│   ├── 08-TESTING-AND-DEMO.md
-│   ├── 09-SECURITY-AND-PRODUCTION.md
-│   ├── 10-DECISIONS.md
-│   ├── 11-DIRECTORY-GUIDE.md
-│   ├── AUDIT-PROJECT-V0.md
-│   ├── README.md
-│   └── V1-MIGRATION-PLAN.md
-│
-├── .env.example
-├── .gitignore
-└── README.md
-```
+Industrial machines rarely fail without warning. Their operating behaviour changes over time: temperature may rise, vibration may become abnormal, current draw may shift, or rotational speed may become unstable.
 
-### Directory Responsibilities
+The challenge is not simply collecting sensor values. It is connecting those values to an understandable, verifiable maintenance decision.
 
-| Directory | Responsibility |
+In many small-scale monitoring workflows, the information a technician needs is fragmented:
+
+- Sensor readings show *what* happened, but not always *why it matters*.
+- Alerts identify abnormal conditions, but may not provide enough context to investigate.
+- Maintenance history and current telemetry may be disconnected.
+- Technicians must interpret dashboards, logs, and machine context under time pressure.
+- A conversational AI interface can sound confident even when the underlying data is incomplete.
+
+PredictIQ addresses this gap by connecting machine telemetry to an evidence-based analysis workflow, then using AI as an interface for understanding and investigation—not as an unchecked source of machine truth.
+
+## Our approach
+
+PredictIQ combines two complementary layers:
+
+### 1. Deterministic machine intelligence
+
+The core system receives telemetry and evaluates machine condition using implemented, inspectable analysis logic. It supports health assessment, predictions, contributing-factor explanations, alerts, and maintenance context.
+
+This layer is responsible for the application's computed machine-health outputs. It must remain traceable to the data and rules that produced them.
+
+### 2. Meta AI-assisted investigation
+
+The hackathon direction adds a natural, multimodal way to interact with machine evidence. Meta models can help a technician ask questions, interpret available context, inspect visual information, or communicate findings.
+
+The AI layer is deliberately constrained:
+
+- It receives machine context and analysis outputs from the application.
+- It must distinguish measured data from generated interpretation.
+- It must not invent sensor readings, timestamps, faults, or maintenance events.
+- It must not silently overwrite deterministic health assessments.
+- Its recommendations are advisory and should expose uncertainty and missing evidence.
+
+**This separation is the design principle that makes PredictIQ useful beyond a chatbot attached to a dashboard.**
+
+---
+
+## What makes PredictIQ different
+
+| Typical monitoring experience | PredictIQ's intended experience |
 |---|---|
-| `.github/` | CI/CD workflows and repository-level development configuration |
-| `.harness/` | Runtime/deployment verification utilities and test harnesses |
-| `audit/` | Preserved V0 reference material; not part of the active V1 runtime |
-| `backend/` | FastAPI application, API routes, database access, health engine, prediction services, authentication, and backend tests |
-| `frontend/` | React/Vite web dashboard and user-facing application |
-| `firmware/esp32/` | Real-hardware ESP32 firmware implementation |
-| `firmware/wokwi/` | Wokwi ESP32-S3 simulation firmware and circuit configuration |
-| `ml/` | V1 prediction, feature engineering, validation, explainability, recommendation, and model-training/evaluation logic |
-| `deploy/gateway/` | Local Wokwi-to-cloud transport gateway |
-| `deploy/` | Containerized deployment configuration, demo scenarios, TLS documentation, and deployment utilities |
-| `docs/` | Locked architecture, API, security, testing, AI/ML, roadmap, decision, and project documentation |
-| Root files | Repository configuration, environment template, ignore rules, and project documentation |
+| Read individual sensor values | Investigate machine condition across related signals |
+| Receive an alert | Inspect the evidence contributing to an alert |
+| Navigate multiple screens | Ask questions about machine state in natural language |
+| Treat AI output as an answer | Ground AI responses in telemetry and deterministic analysis |
+| Treat generated text as a diagnosis | Keep measured facts, computed results, and AI interpretation distinct |
+| Demonstrate a simulated dashboard | Trace telemetry through ingestion, persistence, analysis, and presentation |
 
-### V0 Reference
-
-The frozen V0 implementation is preserved under:
-
-```text
-audit/projectv0/predict-iq/
-```
-
-It is retained as a historical/reference baseline and is not part of the active V1 execution path.
-
-### V1 Runtime Boundary
-
-The active V1 system follows:
-
-```text
-firmware/wokwi
-        │
-        ▼
-deploy/gateway
-        │
-        ▼
-backend
-        │
-        ├──────────────► Supabase PostgreSQL
-        │
-        └──────────────► Gemini AI
-                         │
-                         ▼
-frontend
-```
-
-The `firmware/esp32` directory represents the physical-hardware implementation path that can replace Wokwi when real ESP32 hardware and sensors are available.
-
-## Telemetry
-
-Typical telemetry has this shape:
-
-```json
-{
-  "device_id": "ESP32_001",
-  "machine_id": "TEST-001",
-  "timestamp": "2026-09-18T08:26:54Z",
-  "source": "WOKWI",
-  "temperature": 24.0,
-  "vibration": 0.0,
-  "current": 20.0,
-  "rpm": 600.2023
-}
-```
-
-The example illustrates the schema; production values must originate from an authorized telemetry source.
-
-### Timestamp integrity
-
-The firmware synchronizes time through NTP before sending normal telemetry. The production telemetry path does not use a fake timestamp fallback.
+PredictIQ is a decision-support prototype. It is not a certified safety system, an autonomous machine controller, or a substitute for qualified maintenance personnel and manufacturer procedures.
 
 ---
 
-## Health and Prediction Architecture
+## System architecture
 
-PredictIQ intentionally separates deterministic health evaluation from external AI analysis.
+### End-to-end data path
 
-### Deterministic V1 engine
-
-The baseline deterministic engine is identified as:
-
-```text
-physics-rule-v1
+```mermaid
+flowchart TD
+    A["Machine signals / Wokwi simulation"] --> B["ESP32-S3 firmware"]
+    B --> C["Wi-Fi and HTTPS"]
+    C --> D["FastAPI backend"]
+    D --> E["Device and payload validation"]
+    E --> F[("PostgreSQL")]
+    F --> G["Deterministic health and prediction engine"]
+    G --> H["Explainability and alert workflows"]
+    H --> I["PredictIQ web application"]
+    I --> J["Technician investigation"]
+    J --> K["Meta AI-assisted interaction"]
+    K --> L["Evidence-grounded explanation / response"]
 ```
 
-It evaluates machine operating conditions using configured rules and thresholds. It is a deterministic baseline, not a statistically trained machine-learning model.
+The diagram describes the intended product workflow. The exact deployed path and every integration must be verified against the submitted code and demo. A separate gateway is not assumed: the documented V1 architecture sends device telemetry to FastAPI. Add a gateway to this diagram only if a distinct gateway service is present and used in the final implementation.
 
-### Gemini analysis
+### Data and trust boundaries
 
-The separate analysis path invokes Gemini using the latest actual telemetry.
-
-Example metadata:
-
-```text
-model_version: gemini:gemini-3.6-flash
-source: external_ai
-provider: gemini
-```
-
-This makes prediction origin explicit.
+| Layer | Responsibility | Trust rule |
+|---|---|---|
+| Sensors / simulator | Produce machine readings | Preserve the source of each reading |
+| ESP32-S3 | Package and transmit telemetry | Do not treat Wi-Fi connection as proof of ingestion |
+| FastAPI | Validate, authenticate, and expose application APIs | Reject invalid payloads and unauthorised device requests |
+| PostgreSQL | Persist telemetry and application records | Stored values must be traceable to accepted requests |
+| Deterministic engine | Compute condition and analysis outputs | Keep results reproducible and explainable |
+| Meta AI layer | Help users interpret and investigate evidence | Never fabricate or become the authority for measured facts |
+| Frontend | Present machine state and interaction | Display backend data, not fabricated live values |
 
 ---
 
-## AI / Gemini Integration
+## Core product capabilities
 
-PredictIQ uses Google's Generative Language API for AI-assisted analysis.
+The following describes the PredictIQ product scope. Only mark a capability as complete in the submission if it is present and demonstrable in the submitted version.
 
-The backend:
+| Capability | What it does | Evidence to show |
+|---|---|---|
+| Telemetry ingestion | Receives machine readings from the device/simulator | Request, API response, persisted record |
+| Device authentication | Restricts telemetry ingestion to authorised devices, if enabled | Valid and invalid credential tests |
+| Persistent data | Stores telemetry and operational records | Database record and API retrieval |
+| Machine health | Evaluates machine condition from available signals | Normal, warning, and critical scenarios |
+| Prediction workflow | Produces rule-based/prototype prediction outputs | Persisted prediction and its prototype limitations |
+| Explainability | Exposes contributing sensor factors | Explanation shown beside the result |
+| Alerts | Creates and manages abnormal-condition alerts | Alert creation, acknowledgement, resolution |
+| Maintenance workflow | Records maintenance activity and outcomes | Linked maintenance record |
+| Technician feedback | Captures observations and ground truth | Saved feedback linked to relevant records |
+| Web dashboard | Presents machine and maintenance context | Live API-backed user journey |
 
-1. Retrieves relevant real telemetry.
-2. Builds the inference input.
-3. Computes a SHA-256 hash of that input.
-4. Sends the request to Gemini over HTTPS.
-5. Parses the structured response.
-6. Persists the prediction.
-7. Records provider/model metadata.
+### Important limitation disclosure
 
-Example prediction structure:
+The existing V1 checklist describes the prediction system as deterministic / physics-rule based and explicitly prototype-level. It does **not** claim Remaining Useful Life (RUL) or a validated confidence score. PredictIQ must not present either as a scientifically validated output unless that capability has been separately implemented and validated.
 
-```json
-{
-  "failure_probability": 0.95,
-  "health_status": "faulted",
-  "likely_component": "motor_windings",
-  "severity": "critical",
-  "confidence": 0.98,
-  "model_version": "gemini:gemini-3.6-flash",
-  "source": "external_ai",
-  "provider": "gemini"
-}
-```
-
-The values above illustrate the persisted schema and are not static application defaults.
-
-### Provider failure behavior
-
-If the Gemini API key is missing or the provider call fails, the AI request fails explicitly rather than fabricating a prediction.
+Simulation data is not industrial field data. A Wokwi demonstration proves a simulated integration path, not reliability on a deployed industrial machine.
 
 ---
 
-## Alerts and Maintenance
+## Meta AI integration — hackathon contribution
 
-The health engine can generate alerts when telemetry crosses configured operating limits.
+**This section is the most important part of the hackathon submission.** The hackathon guide requires the demo to highlight only the specific features, code, and functionality built during the event, and requires those contributions to be clearly identifiable. The pre-existing PredictIQ platform must not be misrepresented as hackathon work.
 
-Alert evaluation covers:
+### Meta model usage
 
-- Current
-- RPM
-- Temperature
-- Vibration
+The hackathon guide identifies the Meta model family and Meta Model API as the supported route for model integration, including Muse Spark, Muse Wonder, Muse Image, Muse Voice Transcribe, and SAM 3.1. Use only the models actually integrated into this project.
 
-Alerts are persisted in PostgreSQL and exposed through the backend API.
+Complete this table accurately:
 
-Maintenance and feedback entities extend the workflow from prediction into operational follow-up and evaluation.
+| Meta model / service | How PredictIQ uses it | Implementation status | Evidence |
+|---|---|---|---|
+| **[Exact Meta model name]** | **[Specific task performed using machine context]** | **[Implemented / In progress / Not implemented]** | **[Code path, API call, or demo timestamp]** |
+| **[Exact Meta model name, if applicable]** | **[Specific task]** | **[Status]** | **[Evidence]** |
+| **[Exact Meta model name, if applicable]** | **[Specific task]** | **[Status]** | **[Evidence]** |
 
----
+Do not list a model merely because it was evaluated, considered, or planned. A model belongs in this table as an implemented integration only when the submitted code actually calls it and the result can be demonstrated.
 
-## Device Heartbeat and Offline Detection
+### Intended interaction patterns
 
-Devices periodically send heartbeats.
+The following are potential directions for the Meta AI layer. Retain only those implemented in the final submission.
 
-Heartbeat activity is used to maintain device liveness and distinguish:
+#### Evidence-grounded machine investigation
 
-```text
-ONLINE
-```
+A technician asks a question about a machine. The application retrieves relevant machine context—such as recent telemetry, health status, alerts, and deterministic explanations—and passes that context to the Meta model.
 
-from:
+The response should:
+- Refer to the supplied machine and time window.
+- Distinguish sensor measurements from analysis and model interpretation.
+- Explain which evidence supports the response.
+- State when required data is missing or insufficient.
+- Avoid inventing faults, readings, causes, or certainty.
 
-```text
-OFFLINE
-```
+**Implementation status:** `[UPDATE: IMPLEMENTED / IN PROGRESS / NOT IMPLEMENTED]`
 
-When Wokwi is stopped:
+**Evidence:** `[ADD SOURCE FILE / API ROUTE / DEMO TIMESTAMP]`
 
-- Heartbeats stop.
-- New telemetry stops.
-- The cloud backend remains available.
-- The frontend remains available.
-- Persisted cloud data remains available.
-- Device status can transition to offline according to the configured liveness rules.
+#### Voice-first technician interaction
 
-When Wokwi restarts, heartbeat and telemetry resume.
+If Muse Voice Transcribe is integrated, it can convert a technician's spoken request into text for the investigation workflow. Transcription is not acoustic fault diagnosis: speech transcription alone does not establish a machine fault from sound.
 
----
+**Implementation status:** `[UPDATE STATUS OR REMOVE THIS SECTION]`
 
-## Wokwi Development Path
+**Evidence:** `[ADD SOURCE FILE / DEMO TIMESTAMP]`
 
-The intended local development path is:
+#### Visual machine inspection
 
-```text
-VS Code
-   │
-   ▼
-Wokwi ESP32-S3
-   │
-   ▼
-Official local Wokwi relay (`wokwigw.exe`)
-   │
-   ▼
-PredictIQ Local Gateway
-   │
-   ▼
-HTTPS
-   │
-   ▼
-Render Backend
-```
+If SAM 3.1 or another Meta vision model is integrated, describe the exact image task it performs, the input supplied, and how the result is used. Segmentation identifies or separates visual regions; it does not independently prove that a component is defective or predict machine failure.
 
-The Wokwi configuration uses:
+**Implementation status:** `[UPDATE STATUS OR REMOVE THIS SECTION]`
 
-```toml
-[wokwi]
-version = 1
+**Evidence:** `[ADD SOURCE FILE / DEMO TIMESTAMP]`
 
-[net]
-gateway = "ws://localhost:9011"
-```
+#### Maintenance history investigation
 
-The simulated firmware communicates with the local gateway through:
+If the Meta AI layer can query and summarise persisted alert, prediction, or maintenance history, explain the exact retrieval tools and data scope. Do not describe a general text-generation response as database-backed retrieval unless the application actually performs that retrieval.
 
-```text
-http://host.wokwi.internal:9000
-```
+**Implementation status:** `[UPDATE STATUS OR REMOVE THIS SECTION]`
 
-### Why HTTP is used locally
+**Evidence:** `[ADD SOURCE FILE / DEMO TIMESTAMP]`
 
-Wokwi's local networking environment has limitations around direct HTTPS/TLS connections from the simulated ESP32 environment.
+### AI response contract
 
-Therefore:
+The Meta AI layer should follow this contract:
 
-```text
-Wokwi → Local Gateway
-```
-
-uses HTTP.
-
-The cloud security boundary is preserved at:
-
-```text
-Local Gateway → Render
-```
-
-which uses HTTPS with certificate verification enabled.
-
-This is a deliberate development transport arrangement, not a production TLS bypass.
-
-> **Important:** Do not use `wokwi-cli` as the normal V1 path. The intended workflow is VS Code Wokwi with the official local relay.
+1. **Grounding:** use only context supplied by the application or explicitly identified external input.
+2. **Provenance:** identify the machine, time window, and evidence used when available.
+3. **Separation:** label measured telemetry, deterministic analysis, and AI-generated interpretation distinctly.
+4. **Uncertainty:** say when evidence is missing, stale, conflicting, or insufficient.
+5. **No fabricated precision:** do not invent confidence percentages, failure times, RUL, or sensor values.
+6. **No authority escalation:** do not allow model text to change stored telemetry or authoritative health results.
+7. **Human oversight:** present investigation support, not an autonomous safety or maintenance decision.
 
 ---
 
-## Frontend
+## What was built during the hackathon
 
-The production frontend is hosted on Vercel.
+**Do not leave this section vague.** This is where judges should be able to distinguish the hackathon work from the pre-existing project.
 
-Production URL:
+### Pre-existing foundation
 
-```text
-https://predict-iq-nu.vercel.app/
-```
+The following components belong to the existing PredictIQ V1 foundation and must not be presented as newly created during the hackathon unless they were substantially rebuilt and that work is clearly identified:
 
-The frontend is a React/Vite single-page application.
+- ESP32-S3 / Wokwi telemetry project
+- FastAPI backend and PostgreSQL persistence
+- Deterministic health and prediction workflows
+- Existing explainability and alert functionality
+- Existing dashboard and maintenance workflows
 
-It communicates directly with the production backend:
+Use the repository history and the actual project timeline to verify this list. Remove or correct any item that does not match the codebase before the hackathon.
 
-```text
-Browser
-   │
-   │ HTTPS
-   ▼
-Render API
-```
+### New hackathon work
 
-There is no requirement for a local Node/Express proxy in production.
+Fill this table with concrete, verifiable contributions:
 
-The production frontend does not depend on:
+| New contribution | What was implemented | Where it lives in the code | How judges can verify it |
+|---|---|---|---|
+| Meta model integration | **[Describe exact implemented integration]** | **[File / module / route]** | **[Demo step / API response]** |
+| Evidence/context pipeline | **[Describe data supplied to the model]** | **[File / module]** | **[Show retrieved context]** |
+| Technician interaction | **[Describe working UI or workflow]** | **[Page / component / route]** | **[Demo step]** |
+| Safety / grounding controls | **[Describe implemented constraints]** | **[File / module / tests]** | **[Show test or example]** |
 
-```text
-localhost
-127.0.0.1
-```
+If only one or two contributions were actually completed, list only those. A smaller set of working, clearly attributable features is stronger than a long list of unfinished integrations.
 
----
+### Change history
 
-## Backend API
+Add links to the commits or pull requests that contain the hackathon work:
 
-The backend is a FastAPI application served by Uvicorn.
+- Hackathon implementation commit(s): **[ADD COMMIT LINKS]**
+- Relevant pull request(s): **[ADD LINKS, IF APPLICABLE]**
+- Hackathon work period: **[ADD DATES]**
 
-Important operational endpoints include:
-
-```text
-GET  /api/health
-GET  /api/ready
-POST /api/sensor-data
-POST /api/devices/heartbeat
-POST /api/predictions/analyze
-POST /api/predict
-```
-
-Additional routes expose machines, predictions, alerts, maintenance information, feedback, and operational status.
-
-The exact API surface is defined by the FastAPI application and its OpenAPI schema.
+The repository history should make the boundary between the existing foundation and new hackathon work understandable.
 
 ---
 
-## Database
+## Demo walkthrough — 3 minutes
 
-Production persistence uses PostgreSQL hosted by Supabase.
+The hackathon guide specifies a three-minute demo. The strongest demo is a single coherent machine-investigation journey, not a tour of every page.
 
-The database stores operational entities including:
+Suggested structure — adapt it to the features that genuinely work:
 
-- Machines
-- Devices
-- Sensor readings
-- Predictions
-- Alerts
-- Maintenance records
-- Feedback
-- Machine/device status
+| Time | What to show | What it proves |
+|---|---|---|
+| 0:00–0:20 | State the machine-maintenance problem and PredictIQ's core idea | Problem clarity |
+| 0:20–0:50 | Show a real Wokwi/device reading reaching the backend, if verified | Physical-system connection |
+| 0:50–1:20 | Show the deterministic health result, contributing evidence, and alert | Verifiable machine analysis |
+| 1:20–2:20 | Demonstrate the working Meta model feature using the same machine context | Actual Meta AI integration and technical contribution |
+| 2:20–2:45 | Show how the response is grounded and how uncertainty is handled | Reliability and thoughtful system design |
+| 2:45–3:00 | State what was newly built during the hackathon and the next frontier | Attribution and ambition |
 
-Production telemetry results in persistent database records rather than an in-memory-only state.
+### Demo rules
 
----
+- Show only functionality built during the hackathon when presenting the hackathon contribution.
+- Clearly label the pre-existing PredictIQ foundation.
+- Use a repeatable scenario and known input.
+- Show the actual model interaction, not a mock response.
+- Do not hide failed or unavailable features behind prerecorded claims.
+- Keep API keys and secrets off-screen.
+- Do not use fabricated machine data while describing it as physical telemetry.
+- Keep the demo within the three-minute requirement.
 
-## Security
-
-### Authentication
-
-The gateway uses a dedicated application-level Bearer token for Wokwi-to-gateway authentication.
-
-The backend uses a separate device API key for gateway-to-backend authentication.
-
-These credentials are intentionally separate.
-
-### Allowlists
-
-The gateway validates authorized device and machine identifiers.
-
-### Request protection
-
-The gateway enforces:
-
-- JSON validation
-- Request-size limits
-- Rate limiting
-- Upstream timeouts
-
-### TLS
-
-Gateway-to-Render communication uses HTTPS with normal certificate verification.
-
-Production firmware also retains TLS certificate verification.
-
-PredictIQ V1 does **not** use:
-
-```cpp
-setInsecure()
-```
-
-as a production TLS mechanism.
-
-Temporary TLS diagnostic code used during development was removed from the final V1 path.
-
-### Secret management
-
-Never commit:
-
-- API keys
-- Database passwords
-- Device API keys
-- Gateway tokens
-- Gemini API keys
-- Production `.env` files
-
-Use environment variables and deployment-platform secret storage.
+**Demo video:** `[ADD PUBLIC VIDEO LINK]`
 
 ---
 
-## Environment Configuration
+## Technology
 
-The gateway provides:
+The existing PredictIQ architecture uses:
 
-```text
-deploy/gateway/.env.example
-```
+- **Device / simulation:** ESP32-S3 and Wokwi
+- **Backend:** Python and FastAPI
+- **Database:** PostgreSQL
+- **Frontend:** the web application and framework declared in the repository
+- **Deployment targets:** Vercel for the frontend and Render for backend services, where deployed and verified
+- **Meta AI:** Meta models through the integration actually present in the submitted code
 
-Important variables include:
-
-```text
-RENDER_BACKEND_URL
-RENDER_DEVICE_API_KEY
-GATEWAY_TOKEN
-ALLOWED_DEVICES
-ALLOWED_MACHINES
-MAX_REQUEST_BYTES
-RATE_LIMIT_PER_MINUTE
-UPSTREAM_TIMEOUT_SECONDS
-HOST
-PORT
-```
-
-Backend production configuration includes:
-
-```text
-APP_ENV
-DATABASE_URL
-DB_SSLMODE
-DEVICE_API_KEY
-CORS_ORIGINS
-GEMINI_API_KEY
-GEMINI_MODEL
-```
-
-Sensitive values must be configured through local environment configuration or deployment secret storage.
+Exact versions should be taken from the committed dependency manifests and lockfiles. Do not add technologies to this list unless the project actually uses them.
 
 ---
 
-## Local Development
+## Run locally
+
+The commands below are a guide. Replace placeholders with the real paths, entry points, and scripts in the public repository before submission.
 
 ### Prerequisites
 
-Depending on the component being developed:
-
 - Git
-- Python 3.12+
-- Node.js / npm
-- PlatformIO
-- VS Code
-- Wokwi VS Code integration
-- Docker, when local container testing is required
+- Python version supported by the backend
+- Node.js version supported by the frontend
+- PostgreSQL
+- Optional: Docker and Wokwi
 
-### Clone
+### 1. Clone the repository
 
 ```bash
-git clone <repository-url>
-cd PredictIQ
+git clone <PUBLIC_GITHUB_REPOSITORY_URL>
+cd <REPOSITORY_DIRECTORY>
 ```
 
-### Backend
+### 2. Backend environment
 
-Create a Python environment:
+Create a virtual environment.
 
-#### Windows PowerShell
+**Windows PowerShell**
 
 ```powershell
-python -m venv .venv
+py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-Install backend dependencies and configure the required environment variables.
+**macOS / Linux**
 
-Start FastAPI/Uvicorn using the project's development command.
-
-### Gateway
-
-Move to:
-
-```text
-deploy/gateway
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-Create a local `.env` from `.env.example`.
+Install dependencies using the committed backend dependency manifest. For a repository that uses `requirements.txt`:
 
-Do not commit `.env`.
-
-Install dependencies and start the gateway on its configured port, normally:
-
-```text
-9000
+```bash
+pip install -r requirements.txt
 ```
 
-### Firmware
+If the project uses `pyproject.toml` or another dependency manager, follow that manifest instead.
 
-Open:
+Create a local environment file from the repository template, if present:
 
-```text
-firmware/wokwi
+```bash
+cp .env.example .env
 ```
 
-Build the ESP32-S3 firmware with PlatformIO.
+On Windows PowerShell:
 
-The Wokwi gateway token is supplied through the build environment. The production backend device key remains server-side.
+```powershell
+Copy-Item .env.example .env
+```
+
+Use the exact variable names defined in the backend settings code. Do not guess variable names or commit `.env`.
+
+### 3. Database
+
+Start PostgreSQL and configure the backend's database connection. If Alembic is configured:
+
+```bash
+alembic upgrade head
+```
+
+### 4. Backend server
+
+Use the actual FastAPI import path from the repository:
+
+```bash
+uvicorn <MODULE>:app --reload --host 127.0.0.1 --port 8000
+```
+
+Replace `<MODULE>:app` with the real application import path.
+
+### 5. Frontend
+
+Move to the frontend directory and install from its committed lockfile. For npm:
+
+```bash
+npm ci
+npm run dev
+```
+
+Use the scripts declared in the actual `package.json`.
+
+### 6. Device / simulator
+
+Configure the ESP32-S3 or Wokwi project with the backend endpoint and authentication method implemented by the application. Verify the request, response, and persisted database record. A successful Wi-Fi connection alone is not proof of telemetry ingestion.
 
 ---
 
-## Testing and Verification
+## Configuration and secrets
 
-PredictIQ V1 was validated through a staged 12-gate verification process.
+Environment variable names are defined by source code and may differ between deployments. Check backend settings, frontend environment references, and gateway code (if a separate gateway exists) before configuring services.
 
-| Gate | Area | Verification |
+Typical configuration responsibilities include:
+
+| Service | Configuration | Rule |
 |---|---|---|
-| 1 | Local Gateway | Health, auth, validation, real forwarding |
-| 2 | Wokwi Connectivity | Wi-Fi, NTP, auth, heartbeat, telemetry |
-| 3 | E2E Telemetry | Wokwi → Gateway → Render → Supabase |
-| 4 | Heartbeat | Liveness and telemetry continuity |
-| 5 | Failure / Recovery | Offline detection and recovery |
-| 6 | Real Gemini | Real AI inference and persistence |
-| 7 | Alerts / Maintenance / Feedback | Operational workflow |
-| 8 | Vercel Frontend | Cloud browser/API integration |
-| 9 | Docker | Production container/runtime validation |
-| 10 | Cloud Independence | Laptop-independent cloud architecture |
-| 11 | Security / Reality / Code Audit | Final security and authenticity checks |
-| 12 | Release | V1 release verification |
+| Frontend | Public backend API URL | Public value only |
+| Frontend | OAuth client ID, if used | Public client identifier; never a client secret |
+| Backend | PostgreSQL connection string | Secret |
+| Backend | Application signing secret, if used | Secret |
+| Backend | Device ingestion credential, if implemented | Secret |
+| Backend | Meta API key, if used | Secret |
+| Backend | Allowed frontend origins | Exact production origins |
+| Optional gateway | Backend URL and forwarding credential | Only if a real gateway service exists |
 
-### Regression testing
+### Device ingestion credential
 
-Backend and gateway test suites are maintained in the repository.
+If the backend implements shared-token device authentication, generate a high-entropy token locally:
 
-The gateway verification included comprehensive authentication, validation, forwarding, rate-limit, timeout, and failure-path coverage.
-
-The V1 verification process also included PlatformIO firmware builds and production endpoint checks.
-
----
-
-## Production Deployment
-
-PredictIQ V1 uses three primary cloud services.
-
-### Render
-
-The FastAPI backend is deployed as a Docker service.
-
-Production backend:
-
-```text
-https://predictiq-backend-771t.onrender.com
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Health and readiness endpoints are available for operational verification.
+Store it in the backend's server-side environment. If a separate gateway exists and the implemented forwarding flow requires the same token, configure the matching value there too. The backend must explicitly validate the credential; setting an environment variable by itself does not add authentication.
 
-### Supabase
-
-Production PostgreSQL is hosted by Supabase.
-
-The production database connection uses SSL-required configuration.
-
-### Vercel
-
-The React/Vite frontend is deployed on Vercel.
-
-Production frontend:
-
-```text
-https://predict-iq-nu.vercel.app/
-```
-
-The browser calls the Render API directly over HTTPS.
+Never expose device tokens, database credentials, or Meta API keys in frontend variables or public source code. For production devices, prefer individual revocable device credentials over one shared fleet-wide secret.
 
 ---
 
-## Cloud Independence
+## Deployment
 
-A core V1 requirement is that the web application must remain usable when the developer laptop is unavailable.
+The intended hosting split is:
 
-### During development
+| Component | Platform | Purpose |
+|---|---|---|
+| Frontend | Vercel | Public web application |
+| Backend | Render | FastAPI API |
+| Database | Managed PostgreSQL | Persistent application and telemetry data |
+| Gateway | Render only if present in the actual architecture | Optional request forwarding |
 
-```text
-Wokwi
-  ↓
-Local Gateway
-  ↓
-Render
-  ↓
-Supabase
-  ↓
-Gemini
-  ↓
-Vercel
-```
+Deployment is complete only after a live end-to-end test. A successful build or green hosting status is not enough.
 
-### Without the laptop
+### Production verification checklist
 
-```text
-Vercel
-  ↓
-Render
-  ↓
-Supabase
-```
+- [ ] Frontend uses the deployed HTTPS backend URL.
+- [ ] Backend connects to the intended managed PostgreSQL database.
+- [ ] Database migrations complete successfully.
+- [ ] Backend binds to the host and port required by the hosting platform.
+- [ ] CORS allows only the required production frontend origin(s).
+- [ ] Secrets are configured server-side and are not exposed to browser code.
+- [ ] Device authentication is verified with both valid and invalid credentials.
+- [ ] A device/simulator telemetry request reaches the deployed API.
+- [ ] The same telemetry is found in PostgreSQL and retrieved through the API.
+- [ ] The dashboard displays the persisted backend data.
+- [ ] Meta API calls work from the backend using server-side credentials, if integrated.
+- [ ] The system is tested after restart and independently of the developer's laptop.
 
-The cloud application remains online.
-
-Only the local Wokwi-generated telemetry source becomes unavailable.
-
-The frontend should therefore show the persisted cloud state and device liveness honestly rather than implying that a disconnected device is still transmitting.
+Live application: **[ADD URL OR WRITE “NOT PUBLICLY DEPLOYED”]**
 
 ---
 
-## Current V1 Scope
+## Testing and evidence
 
-V1 includes:
+PredictIQ should be evaluated through observable system behaviour, not screenshots alone.
 
-- ESP32-S3 Wokwi simulation
-- Real telemetry ingestion
-- Local Wokwi gateway
-- Cloud FastAPI backend
-- Render deployment
-- Supabase PostgreSQL
-- Machine/device records
-- Persistent sensor readings
-- Deterministic health engine
-- Gemini AI analysis
-- Persisted predictions
-- Prediction input hashing
-- Idempotent AI analysis behavior
-- Machine health state
-- Alert generation
-- Heartbeat/liveness
-- Offline/recovery behavior
-- Maintenance records
-- Feedback records
-- React/Vite frontend
-- Vercel deployment
-- HTTPS cloud transport
-- CORS controls
-- Docker runtime
-- Environment-based secrets
-- Staged verification gates
+### Machine scenarios
 
----
+| Scenario | Input | Expected evidence |
+|---|---|---|
+| Normal operation | Normal operating readings | Normal condition output |
+| Degradation | One or more abnormal readings | Changed condition and explainable contributing factors |
+| Critical condition | Multiple severe abnormal readings | Critical state and alert, according to implemented rules |
+| Insufficient data | Missing or invalid readings | Validation or insufficient-evidence behaviour |
+| Invalid device credential | Missing or incorrect token | Request rejected by backend |
 
-## Known V1 Limitations
+The expected outcomes must match the actual implemented thresholds and rules. Do not invent thresholds in this README.
 
-PredictIQ V1 is a production-oriented prototype, not a finished industrial predictive-maintenance product.
+### End-to-end proof
 
-### Wokwi is a simulation
+- [ ] Record a telemetry payload from Wokwi or the physical device.
+- [ ] Record the API response for that exact request.
+- [ ] Locate the matching persisted database record.
+- [ ] Retrieve the record through the API.
+- [ ] Show the corresponding dashboard state.
+- [ ] Show the deterministic health/prediction result and its explanation.
+- [ ] Show the actual Meta model request and response, if integrated.
+- [ ] Demonstrate how the AI response is grounded in supplied context.
+- [ ] Demonstrate behaviour when the model has insufficient evidence.
+- [ ] Record the release commit hash and test results.
 
-The current device boundary is simulated through Wokwi and is not equivalent to telemetry collected from a physical industrial machine.
+### Historical project audit — context, not current proof
 
-The architecture allows a physical device to replace Wokwi later.
+A previous PredictIQ audit recorded 139 automated tests passing and classified findings as 22 GREEN, 3 YELLOW, 0 RED, and 0 GRAY at that time. That audit also listed runtime work still requiring proof, including the complete Wokwi-to-API-to-PostgreSQL round trip, Docker runtime, CI, physical hardware, and production TLS/deployment.
 
-### Local gateway is development infrastructure
-
-The local gateway exists to bridge the Wokwi networking limitation. It is not intended to be the permanent production device-ingestion architecture.
-
-### Deterministic rules are not a trained predictive model
-
-`physics-rule-v1` is a deterministic baseline and should not be represented as a statistically trained predictive-maintenance model.
-
-### Gemini is an external dependency
-
-AI analysis depends on Gemini provider availability, quotas, latency, and model behavior.
-
-### Threshold calibration
-
-V1 thresholds are prototype operating rules. They should be calibrated against real historical machine data before high-stakes industrial use.
-
-### Scale
-
-V1 demonstrates a complete working system rather than a horizontally scaled industrial IoT platform.
+These are historical results. They must not be represented as the status of the current submission unless the same checks have been rerun against the submitted commit. Update this paragraph with current, reproducible results—or remove it.
 
 ---
 
-## Future Extension
+## Responsible AI and safety
 
-Potential future versions can add:
+PredictIQ concerns physical equipment. Incorrect or overconfident output can cause wasted maintenance effort or unsafe decisions. The project therefore treats AI as an assistant for investigation, not as an authority over the machine.
 
-- Physical ESP32 sensor deployment
-- MQTT or industrial IoT ingestion
-- Multiple machines
-- Multiple sites
-- Time-series optimization
-- Historical feature engineering
-- Trained predictive models
-- Anomaly detection
-- Remaining useful life estimation
-- Model evaluation pipelines
-- Model drift monitoring
-- Automated retraining
-- Role-based access control
-- Production observability
-- Structured audit logging
-- Queue-based telemetry ingestion
-- Scalable device registration
-- Industrial protocol integration
-- Advanced maintenance workflows
-
-These are future capabilities and are not represented as completed V1 functionality.
+- Sensor readings must retain their source and timestamps.
+- Simulated data must be labelled as simulated.
+- Deterministic outputs must remain distinguishable from generated text.
+- AI responses must be grounded in retrieved machine context.
+- Missing or conflicting evidence must be disclosed.
+- The model must not claim validated RUL or confidence where none exists.
+- AI must not directly control machinery or bypass safety interlocks.
+- Technicians must follow site safety procedures and manufacturer guidance.
 
 ---
 
-## Project Principles
+## Limitations
 
-### 1. Real over simulated production state
+The following limitations should be stated honestly in the submission and demo:
 
-Simulation is allowed at the device boundary. Production database rows and AI results must not be fabricated.
-
-### 2. Explicit system boundaries
-
-Device, gateway, backend, database, AI, and frontend responsibilities remain separated.
-
-### 3. Fail closed
-
-Missing credentials and invalid security configuration should cause explicit failures rather than silently enabling insecure behavior.
-
-### 4. Verified TLS
-
-Development networking constraints must not become a reason to disable production certificate verification.
-
-### 5. Secrets stay out of source
-
-Credentials belong in environment configuration and deployment secret stores.
-
-### 6. Explainability
-
-Predictions should preserve enough metadata to identify:
-
-- What model/provider generated them
-- What telemetry was analyzed
-- When it was analyzed
-- What recommendation was produced
-
-### 7. Observable failure
-
-When a device goes offline or an external AI provider fails, the system should represent that state rather than fabricate successful activity.
-
-### 8. Reproducibility
-
-The staged gate process makes important system behavior independently verifiable.
+- Wokwi simulation is not a substitute for long-duration testing on industrial equipment.
+- Rule-based or physics-informed prototype predictions are not equivalent to a validated failure-prognosis model.
+- No validated RUL or statistical confidence should be claimed unless independently implemented and evaluated.
+- Sensor calibration, mounting, sampling frequency, and machine-specific baselines affect real-world performance.
+- Meta AI output can be wrong and must be checked against the supplied evidence.
+- Deployment, physical-device connectivity, and model integrations are only complete when demonstrated on the submitted version.
 
 ---
 
-## Operational Summary
+## Roadmap
 
-```text
-1. ESP32-S3 generates telemetry
-2. Wokwi simulates the device
-3. Official Wokwi relay provides host networking
-4. Local gateway authenticates and validates telemetry
-5. Gateway sends telemetry over verified HTTPS
-6. Render validates and persists telemetry
-7. Health engine evaluates machine state
-8. Alerts are generated when thresholds require them
-9. Gemini analyzes actual persisted telemetry when requested
-10. Prediction metadata and input hash are persisted
-11. Heartbeats maintain device liveness
-12. Offline/recovery state is detected
-13. Vercel frontend reads cloud state
-14. Users view monitoring, predictions, alerts, and maintenance information
-```
+### Immediate: hackathon demonstration
+
+- [ ] Complete and verify the Meta model integration(s) actually selected
+- [ ] Ground model context in persisted telemetry and deterministic analysis
+- [ ] Demonstrate one complete technician investigation workflow
+- [ ] Make the hackathon contribution boundary clear in code and Git history
+- [ ] Record the three-minute demo
+- [ ] Verify the public repository and submission links
+
+### Next: stronger real-world validation
+
+- [ ] Test with physical machine data and calibrated sensors
+- [ ] Evaluate analysis against labelled operating scenarios
+- [ ] Improve per-device identity, credential rotation, and revocation
+- [ ] Measure model grounding, failure cases, latency, and operating cost
+- [ ] Validate the workflow with maintenance technicians
+- [ ] Expand only when the evidence supports it
 
 ---
 
-## V1 Reality Statement
+## Hackathon submission checklist
 
-PredictIQ V1 is a **real cloud-connected predictive-maintenance prototype**.
+The participant guide specifies a public repository, a maximum team size of four, a three-minute demo, and a clear explanation of the functionality built during the hackathon. Check the official submission platform for the final required fields and any updates.
 
-The production path uses:
+- [ ] Repository is public and accessible without authentication.
+- [ ] README identifies the project, track, and problem statement.
+- [ ] README distinguishes the existing foundation from new hackathon work.
+- [ ] Every claimed Meta model integration is implemented and demonstrable.
+- [ ] Model names and their roles are accurate.
+- [ ] Setup instructions work from a clean checkout.
+- [ ] No secrets, API keys, or credentials are committed.
+- [ ] Three-minute demo link is public and working.
+- [ ] Demo highlights the new hackathon-built functionality.
+- [ ] Live application link works, if one is supplied.
+- [ ] All contributors are listed accurately.
+- [ ] License is selected and included if the project is intended to be open source.
+- [ ] Submission form is complete and submitted before the official deadline.
 
-```text
-Real telemetry
-      ↓
-Real API transport
-      ↓
-Real PostgreSQL persistence
-      ↓
-Real health processing
-      ↓
-Real Gemini API inference
-      ↓
-Real persisted predictions
-      ↓
-Real alerts / machine state
-      ↓
-Real cloud frontend
-```
+### Team
 
-The only simulated component in the normal V1 demonstration path is the **physical device/sensor boundary**, represented by Wokwi.
+- **Developer / contributor:** [ADD NAME]
+- **Other contributors:** [ADD NAMES OR “SOLO PROJECT”]
 
-This distinction is intentional and documented.
+List only people who actually contributed. The hackathon rules allow a maximum team size of four.
+
+### Links
+
+- GitHub repository: **[ADD URL]**
+- Demo video: **[ADD URL]**
+- Live application: **[ADD URL OR “NOT DEPLOYED”]**
+- Additional technical notes: **[ADD URL, IF ANY]**
 
 ---
 
 ## License
 
-Add the project's selected license here before public distribution.
+**[ADD LICENSE NAME AND LICENSE FILE LINK]**
 
-If the repository already contains a license file, that license governs the project.
+If the repository is intended to be open source, add the chosen license file and ensure the project has the rights to distribute all included code, data, images, and other assets. A public repository without a license does not automatically grant reuse rights.
 
 ---
 
-## Maintainer Notes
-
-When modifying PredictIQ:
-
-- Preserve the separation between device, gateway, backend, database, AI, and frontend.
-- Do not introduce fake production telemetry.
-- Do not hardcode production prediction results.
-- Do not commit credentials.
-- Do not disable TLS verification.
-- Keep cloud services independent from the developer laptop.
-- Update this README whenever a verified architectural capability changes.
+<p align="center">
+  <strong>PredictIQ</strong><br/>
+  <em>From machine signals to evidence-grounded decisions.</em><br/>
+  <sub>Push the frontier. Keep the evidence in control.</sub>
+</p>
