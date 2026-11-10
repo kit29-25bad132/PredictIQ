@@ -93,6 +93,15 @@ def check_session(request: Request) -> SessionResponse:
     """Returns whether the current session cookie is valid and not expired."""
     settings = get_settings()
 
+    # A session can only be trusted when a signing secret exists. With an empty
+    # secret every HMAC verifies, so anyone could forge a valid cookie; refuse
+    # to report an authenticated session instead of accepting the forgery.
+    if not settings.operator_session_secret:
+        return SessionResponse(
+            authenticated=False,
+            message="Session authentication is not configured on this server.",
+        )
+
     token = _extract_session_token(request)
     if token is None:
         return SessionResponse(authenticated=False, message="No active session.")

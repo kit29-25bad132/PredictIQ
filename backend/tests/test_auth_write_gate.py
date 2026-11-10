@@ -269,3 +269,110 @@ class TestPublicEndpoints:
         finally:
             auth_module._WARNED_UNCONFIGURED = False
             app.dependency_overrides.pop(get_db, None)
+
+
+class TestUnconfiguredPosture:
+    """Neither transport may fail open once the deployment says production."""
+
+    def test_production_device_gate_fails_closed(self, session_factory, monkeypatch):
+        """APP_ENV=production never accepts anonymous writes, even with no key.
+
+        The Docker entrypoint refuses to boot without DEVICE_API_KEY, but the
+        application must not depend on that: a deployment that starts uvicorn
+        directly would otherwise expose every write endpoint to the internet.
+        """
+        install_auth(monkeypatch)
+        _set_device_api_key("")
+        monkeypatch.setattr(get_settings(), "environment", "production")
+        auth_module._WARNED_UNCONFIGURED = False
+
+        def override_get_db():
+            with session_factory() as db:
+                yield db
+
+        app.dependency_overrides[get_db] = override_get_db
+        try:
+            client = TestClient(app)
+            sensor = client.post("/api/sensor-data", json=telemetry_payload())
+            assert sensor.status_code == 503, sensor.text
+            assert "not configured" in sensor.json()["detail"]
+
+            predict = client.post(
+                "/api/predict",
+                json={"machine_id": "M-AUTH", "temperature": 50, "vibration": 2},
+            )
+            assert predict.status_code == 503, predict.text
+
+            # Reads keep their own gate: this is only about the write key.
+            assert client.get("/api/health").status_code == 200
+        finally:
+            auth_module._WARNED_UNCONFIGURED = False
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_development_device_gate_still_opens_without_a_key(
+        self, session_factory, monkeypatch
+    ):
+        """The documented development posture is preserved (see test above)."""
+        install_auth(monkeypatch)
+        _set_device_api_key("")
+        monkeypatch.setattr(get_settings(), "environment", "development")
+        auth_module._WARNED_UNCONFIGURED = False
+
+        def override_get_db():
+            with session_factory() as db:
+                yield db
+
+        app.dependency_overrides[get_db] = override_get_db
+        try:
+            client = TestClient(app)
+            # Gate is open here; the request still fails because D-AUTH is not
+            # registered in this empty database (404), not 401/503.
+            response = client.post("/api/sensor-data", json=telemetry_payload())
+            assert response.status_code == 404
+        finally:
+            auth_module._WARNED_UNCONFIGURED = False
+            app.dependency_overrides.pop(get_db, None)
+
+
+class TestOperatorSessionSecret:
+    """GET /api/auth/session must never vouch for a session it cannot verify."""
+
+    def test_unconfigured_secret_rejects_forged_cookie(self, monkeypatch):
+        """An empty OPERATOR_SESSION_SECRET makes every HMAC verify.
+
+        Without a guard, a cookie signed with the empty key would be reported
+        as an authenticated operator session. Refuse instead.
+        """
+        monkeypatch.setattr(get_settings(), "operator_session_secret", "")
+        forged = auth_module.create_operator_session_token(3600, "")
+        assert auth_module.verify_operator_session_token(forged, "") is True
+
+        client = TestClient(app)
+        response = client.get(
+            "/api/auth/session",
+            headers={
+                "Cookie": (
+                    f"{auth_module.SESSION_COOKIE_NAME}="
+                    f"{auth_module.SESSION_SIGNED_PREFIX}{forged}"
+                )
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["authenticated"] is False
+
+    def test_configured_secret_rejects_wrongly_signed_cookie(self, monkeypatch):
+        monkeypatch.setattr(get_settings(), "operator_session_secret", "real-secret")
+        forged = auth_module.create_operator_session_token(3600, "attacker-secret")
+
+        client = TestClient(app)
+        response = client.get(
+            "/api/auth/session",
+            headers={
+                "Cookie": (
+                    f"{auth_module.SESSION_COOKIE_NAME}="
+                    f"{auth_module.SESSION_SIGNED_PREFIX}{forged}"
+                )
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["authenticated"] is False
