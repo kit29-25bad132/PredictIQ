@@ -1,14 +1,18 @@
 /**
  * Predict IQ - OAuth / PKCE callback page.
  *
- * Restores the session after Google redirects back (?code=...), shows a real
+ * Completes the session after Google redirects back (?code=...), shows a real
  * error state when the exchange fails, and only then continues to the
- * workbench. Never fakes a successful sign-in.
+ * workbench. The shared Supabase client exchanges the code exactly once (its
+ * own URL detection during initialization); this page only exchanges manually
+ * when the client left the code behind, so the single-use PKCE verifier is
+ * never consumed twice. Never fakes a successful sign-in.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { resolveAuthCallback } from '../../lib/authSession';
 import { AuthCard, AuthFieldError } from '../../components/auth/AuthCard';
 
 interface AuthCallbackPageProps {
@@ -16,45 +20,62 @@ interface AuthCallbackPageProps {
   onSuccess: () => void;
 }
 
+const readCodeFromUrl = (): string | null =>
+  typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('code');
+
+/** Drop the consumed code so a refresh never replays a spent authorization code. */
+function clearCallbackParams(): void {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('code') && !url.searchParams.has('error')) return;
+  url.searchParams.delete('code');
+  url.searchParams.delete('error');
+  url.searchParams.delete('error_description');
+  window.history.replaceState(window.history.state, '', url.toString());
+}
+
 export const AuthCallbackPage: React.FC<AuthCallbackPageProps> = ({ onNavigatePath, onSuccess }) => {
-  const { status, exchangeCode } = useAuth();
+  const { status, exchangeCode, initializeAuth } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const attempted = useRef(false);
+  const exchangedManually = useRef(false);
 
   useEffect(() => {
     if (attempted.current) return;
+    attempted.current = true;
 
-    const params = new URLSearchParams(window.location.search);
+    const params = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
     const oauthError = params.get('error_description') || params.get('error');
-    const code = params.get('code');
 
-    if (oauthError) {
-      attempted.current = true;
-      setError(oauthError);
-      return;
-    }
+    void resolveAuthCallback({
+      oauthError,
+      readCode: readCodeFromUrl,
+      initialize: initializeAuth,
+      exchange: exchangeCode,
+    }).then((outcome) => {
+      if (outcome.kind === 'failed') {
+        setError(outcome.error);
+        return;
+      }
+      if (outcome.kind === 'exchanged') {
+        exchangedManually.current = true;
+        clearCallbackParams();
+      }
+    });
+  }, [exchangeCode, initializeAuth]);
 
-    if (code) {
-      attempted.current = true;
-      exchangeCode(code).then((result) => {
-        if (!result.ok) setError(result.error || 'Could not complete sign-in.');
-      });
-      return;
-    }
-
-    // Implicit/hash flow: detectSessionInUrl may already have restored the
-    // session; give it one tick before declaring failure.
-    if (status === 'authenticated') {
-      attempted.current = true;
-      onSuccess();
-    }
-  }, [status, exchangeCode, onSuccess]);
-
+  // A session restored by the client (or by the exchange above) ends the flow.
   useEffect(() => {
     if (status === 'authenticated' && !error) {
       onSuccess();
     }
   }, [status, error, onSuccess]);
+
+  // A callback that never yields a session must fail loudly, not spin forever.
+  useEffect(() => {
+    if (status !== 'unauthenticated' || error || exchangedManually.current) return;
+    if (readCodeFromUrl()) return;
+    setError('We could not complete your sign-in. Please try signing in again.');
+  }, [status, error]);
 
   if (error) {
     return (

@@ -43,6 +43,13 @@ export interface AuthErrorLike {
 export interface SupabaseAuthLike {
   auth: {
     getSession(): Promise<{ data: { session: SessionLike | null }; error?: unknown }>;
+    /**
+     * Runs the client's one-time URL detection (PKCE / implicit callback).
+     * The client invokes this itself at construction, so awaiting it from the
+     * callback page is how we observe that single exchange's outcome instead of
+     * starting a second exchange for the same code.
+     */
+    initialize?(): Promise<{ error?: unknown }>;
     onAuthStateChange(
       callback: (event: string, session: SessionLike | null) => void
     ): { data: { subscription: { unsubscribe(): void } } };
@@ -77,6 +84,9 @@ export type AuthListener = (status: AuthStatus, user: AuthUser | null) => void;
 export function humanizeAuthError(error: AuthErrorLike | null | undefined): string {
   if (!error) return 'Something went wrong. Please try again.';
   const message = (error.message || '').toLowerCase();
+  if (error.code === 'pkce_code_verifier_not_found' || message.includes('pkce code verifier not found')) {
+    return 'This sign-in attempt could not be verified. Please try signing in again.';
+  }
   if (message.includes('invalid login credentials')) {
     return 'Incorrect email or password.';
   }
@@ -99,6 +109,51 @@ export function humanizeAuthError(error: AuthErrorLike | null | undefined): stri
     return 'The authentication service could not complete the request. Please try again later.';
   }
   return error.message || 'Something went wrong. Please try again.';
+}
+
+export type AuthCallbackOutcome =
+  /** Callback parameters or the exchange itself failed; show `error`. */
+  | { kind: 'failed'; error: string }
+  /** This page performed the one and only code exchange; await auth state. */
+  | { kind: 'exchanged' }
+  /** The shared client already handled the code (or there was none); await auth state. */
+  | { kind: 'delegated' };
+
+export interface AuthCallbackInput {
+  /** `error` / `error_description` straight from the callback URL, if any. */
+  oauthError?: string | null;
+  /** Read AFTER initialization: a successful client exchange strips `?code=`. */
+  readCode: () => string | null;
+  initialize: () => Promise<AuthResult>;
+  exchange: (code: string) => Promise<AuthResult>;
+}
+
+/**
+ * Resolve an OAuth/PKCE callback with exactly one code exchange.
+ *
+ * The shared browser client already exchanges `?code=` during its own
+ * initialization, deleting the single-use verifier when it succeeds. Exchanging
+ * again from this page races that exchange and fails with "PKCE code verifier
+ * not found in storage", so we await initialization first and only fall back to
+ * a manual exchange when the client left the code untouched (no verifier was
+ * available for it, or the client does not auto-detect).
+ */
+export async function resolveAuthCallback(input: AuthCallbackInput): Promise<AuthCallbackOutcome> {
+  if (input.oauthError) return { kind: 'failed', error: input.oauthError };
+
+  const initialized = await input.initialize();
+  if (!initialized.ok) {
+    return { kind: 'failed', error: initialized.error || 'Could not complete the sign-in callback.' };
+  }
+
+  const code = input.readCode();
+  if (!code) return { kind: 'delegated' };
+
+  const exchanged = await input.exchange(code);
+  if (!exchanged.ok) {
+    return { kind: 'failed', error: exchanged.error || 'Could not complete the sign-in callback.' };
+  }
+  return { kind: 'exchanged' };
 }
 
 export class AuthSessionManager {
@@ -237,6 +292,27 @@ export class AuthSessionManager {
     } finally {
       // Local state must clear regardless of network outcome.
       this.applySession(null);
+    }
+  }
+
+  /**
+   * Await the shared client's single URL-detection pass.
+   *
+   * With `detectSessionInUrl` enabled the client exchanges `?code=` itself the
+   * moment it is constructed, consuming the PKCE verifier. The callback page
+   * must therefore wait for this result and only exchange manually when the
+   * client left a code behind (i.e. it never ran) — otherwise the second
+   * exchange fails with "PKCE code verifier not found in storage".
+   */
+  public async initializeAuth(): Promise<AuthResult> {
+    const init = this.supabase.auth.initialize;
+    if (typeof init !== 'function') return { ok: true };
+    try {
+      const { error } = await init.call(this.supabase.auth);
+      if (error) return { ok: false, error: humanizeAuthError(error as AuthErrorLike) };
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Could not complete the sign-in callback.' };
     }
   }
 
