@@ -135,7 +135,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const deviceConnectionState: 'ONLINE' | 'OFFLINE' | 'WAITING' = useMemo(() => {
     if (!backendOnline) return 'OFFLINE';
     if (!dataStatus) return 'WAITING';
-    if (dataStatus.sensor_status === 'CONNECTED') return 'ONLINE';
+    if (dataStatus.sensor_status === 'ONLINE') return 'ONLINE';
     if (dataStatus.total_readings > 0) return 'OFFLINE';
     return 'WAITING';
   }, [backendOnline, dataStatus]);

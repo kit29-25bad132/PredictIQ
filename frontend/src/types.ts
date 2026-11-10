@@ -126,7 +126,7 @@ export interface FleetStats {
 }
 
 export interface DataCollectionStatus {
-  sensor_status: 'CONNECTED' | 'OFFLINE';
+  sensor_status: 'ONLINE' | 'OFFLINE';
   last_reading?: string | null;
   total_readings: number;
   data_collection: 'ACTIVE' | 'WAITING';

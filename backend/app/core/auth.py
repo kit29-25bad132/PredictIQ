@@ -70,7 +70,8 @@ def _extract_api_key(request: Request) -> Optional[str]:
 def require_api_key(request: Request) -> None:
     """FastAPI dependency enforcing the configured API key on write endpoints.
 
-    - Server has no key configured -> gate open (development only; warns once).
+    - Production has no key configured -> 503 (fail closed, never anonymous).
+    - Development has no key configured -> gate open (warns once).
     - Missing credential            -> 401 Unauthorized.
     - Wrong credential              -> 403 Forbidden.
     """
@@ -78,6 +79,11 @@ def require_api_key(request: Request) -> None:
     expected = settings.device_api_key
 
     if not expected:
+        if settings.environment == "production":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="API write gate is not configured on this server.",
+            )
         _warn_unconfigured_once()
         return
 
