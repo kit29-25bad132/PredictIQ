@@ -35,6 +35,8 @@ interface AuthContextValue {
   requestPasswordReset: (email: string) => Promise<AuthResult>;
   updatePassword: (password: string) => Promise<AuthResult>;
   exchangeCode: (code: string) => Promise<AuthResult>;
+  /** Awaits the shared client's one-time URL detection (OAuth callback). */
+  initializeAuth: () => Promise<AuthResult>;
   /** The single authoritative workspace for this session. */
   workspace: OrganizationSummary | null;
   workspaceStatus: WorkspaceState['status'];
@@ -173,6 +175,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [manager]
   );
 
+  const initializeAuth = useCallback(
+    () =>
+      manager ? manager.initializeAuth() : Promise.resolve({ ok: false, error: SUPABASE_CONFIG_ERROR }),
+    [manager]
+  );
+
   const retryWorkspace = useCallback(() => {
     void initializer.retry();
   }, [initializer]);
@@ -190,6 +198,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       requestPasswordReset,
       updatePassword,
       exchangeCode,
+      initializeAuth,
       workspace: workspaceState.workspace,
       workspaceStatus: workspaceState.status,
       workspaceLoading: workspaceState.status === 'loading',
@@ -208,6 +217,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       requestPasswordReset,
       updatePassword,
       exchangeCode,
+      initializeAuth,
       workspaceState,
       retryWorkspace,
     ]

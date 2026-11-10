@@ -12,7 +12,7 @@
  * no-membership handling, route-guard decisions and config validation.
  */
 
-import { AuthSessionManager, humanizeAuthError, SessionLike } from '../lib/authSession';
+import { AuthSessionManager, humanizeAuthError, resolveAuthCallback, SessionLike } from '../lib/authSession';
 import {
   buildSignInPath,
   getAuthGuardDecision,
@@ -57,6 +57,9 @@ interface FakeState {
   resetError: { message: string } | null;
   updateError: { message: string } | null;
   exchangeError: { message: string } | null;
+  initializeError: { message: string; code?: string } | null;
+  initializeCalls: number;
+  exchangeCalls: number;
   refreshSession: SessionLike | null;
   oauthRedirectTo: string | null;
 }
@@ -76,12 +79,19 @@ function createFakeSupabase(): { client: any; state: FakeState } {
     resetError: null,
     updateError: null,
     exchangeError: null,
+    initializeError: null,
+    initializeCalls: 0,
+    exchangeCalls: 0,
     refreshSession: null,
     oauthRedirectTo: null,
   };
 
   const client = {
     auth: {
+      initialize: async () => {
+        state.initializeCalls += 1;
+        return { error: state.initializeError };
+      },
       getSession: async () => ({ data: { session: state.session } }),
       onAuthStateChange(cb: (event: string, session: SessionLike | null) => void) {
         state.listenerCount += 1;
@@ -111,7 +121,10 @@ function createFakeSupabase(): { client: any; state: FakeState } {
         state.session = state.refreshSession;
         return { data: { session: state.refreshSession } };
       },
-      exchangeCodeForSession: async () => ({ data: {}, error: state.exchangeError }),
+      exchangeCodeForSession: async () => {
+        state.exchangeCalls += 1;
+        return { data: {}, error: state.exchangeError };
+      },
     },
   };
 
@@ -315,6 +328,98 @@ console.log('\n-- Authentication flows --');
   state.exchangeError = { message: 'bad code' };
   const badExchange = await manager.exchangeCode('bad-code');
   assert(badExchange.ok === false, 'Invalid callback code surfaces a real error.');
+}
+
+// ============================================================================
+// 4b. OAuth/PKCE callback: the authorization code is exchanged exactly once
+// ============================================================================
+console.log('\n-- OAuth callback (single PKCE exchange) --');
+{
+  const { client, state } = createFakeSupabase();
+  const manager = new AuthSessionManager(client);
+  let exchanges = 0;
+  const countExchange = async (_code: string) => {
+    exchanges += 1;
+    return { ok: true };
+  };
+
+  // 1. The shared client already exchanged during initialization: no second try.
+  const delegated = await resolveAuthCallback({
+    oauthError: null,
+    readCode: () => null,
+    initialize: () => manager.initializeAuth(),
+    exchange: countExchange,
+  });
+  assert(
+    delegated.kind === 'delegated' && exchanges === 0 && state.initializeCalls === 1,
+    'Client-handled callback never starts a second exchange (verifier stays intact).'
+  );
+
+  // 2. Initialization reported the failure: surface it, never retry a spent code.
+  state.initializeError = {
+    message: 'PKCE code verifier not found in storage.',
+    code: 'pkce_code_verifier_not_found',
+  };
+  const initFailed = await resolveAuthCallback({
+    oauthError: null,
+    readCode: () => 'leftover-code',
+    initialize: () => manager.initializeAuth(),
+    exchange: countExchange,
+  });
+  assert(initFailed.kind === 'failed' && exchanges === 0, 'A failed client exchange is not retried.');
+  assert(
+    initFailed.kind === 'failed' && initFailed.error === 'This sign-in attempt could not be verified. Please try signing in again.',
+    'Verifier-missing failures are humanized on the callback screen.'
+  );
+  assert(
+    humanizeAuthError({ message: 'PKCE code verifier not found in storage.', code: 'pkce_code_verifier_not_found' }) ===
+      'This sign-in attempt could not be verified. Please try signing in again.',
+    'PKCE verifier errors map to actionable copy.'
+  );
+  state.initializeError = null;
+
+  // 3. The client left the code behind: exactly one manual exchange.
+  const manual = await resolveAuthCallback({
+    oauthError: null,
+    readCode: () => 'auth-code-999',
+    initialize: () => manager.initializeAuth(),
+    exchange: (code) => manager.exchangeCode(code),
+  });
+  assert(
+    manual.kind === 'exchanged' && state.exchangeCalls === 1 && exchanges === 0,
+    'An unhandled authorization code is exchanged exactly once.'
+  );
+
+  // 4. An invalid/expired code fails loudly.
+  state.exchangeError = { message: 'invalid_grant' };
+  const manualFailed = await resolveAuthCallback({
+    oauthError: null,
+    readCode: () => 'spent-code',
+    initialize: () => manager.initializeAuth(),
+    exchange: (code) => manager.exchangeCode(code),
+  });
+  assert(
+    manualFailed.kind === 'failed' && state.exchangeCalls === 2,
+    'Expired or invalid authorization codes surface a real error.'
+  );
+  state.exchangeError = null;
+
+  // 5. Provider error redirects short-circuit before any exchange.
+  const initCallsBefore = state.initializeCalls;
+  const providerError = await resolveAuthCallback({
+    oauthError: 'Google denied the request',
+    readCode: () => 'code',
+    initialize: () => manager.initializeAuth(),
+    exchange: countExchange,
+  });
+  assert(
+    providerError.kind === 'failed' && providerError.error === 'Google denied the request',
+    'OAuth provider errors are surfaced verbatim.'
+  );
+  assert(
+    state.initializeCalls === initCallsBefore && exchanges === 0,
+    'Provider error redirects never attempt an exchange.'
+  );
 }
 
 // ============================================================================
