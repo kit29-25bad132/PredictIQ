@@ -1,9 +1,10 @@
 """
 Tests for Machine Simulation Configuration API and Schemas.
 
-Covers request validation, response schemas, and the operator-session
-authentication required on every mutation endpoint (POST, PUT, reset).
-All tests run against in-memory SQLite - no persistent/production data.
+Covers request validation, response schemas, and the organization role gate
+(owner/admin) plus tenant scoping required on every mutation endpoint
+(POST, PUT, reset). All tests run against in-memory SQLite - no
+persistent/production data.
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -12,37 +13,23 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.app.core import auth as auth_module
-from backend.app.core.config import get_settings
 from backend.app.db.database import Base, get_db
 from backend.app.db.models import Machine, Organization
 from backend.app.main import app
-from backend.tests.tenant_utils import USER_A, auth_headers, install_auth, seed_membership, seed_organization
+from backend.tests.tenant_utils import (
+    USER_A,
+    USER_B,
+    auth_headers,
+    install_auth,
+    make_token,
+    seed_membership,
+    seed_organization,
+)
 from backend.app.schemas.simulation import (
     SimulationConfigBase,
     SimulationConfigUpdate,
     SimulationConfigResponse,
 )
-
-OPERATOR_TEST_SECRET = "unit-test-operator-secret-123"
-
-
-def _set_operator_secret(value: str) -> None:
-    """Patch the cached Settings instance operator_session_secret.
-
-    get_settings() is lru_cache'd and auth.py reads the live instance on
-    every request, so patching it here enables real session-token
-    verification inside tests without touching environment files.
-    """
-    get_settings().operator_session_secret = value
-
-
-def _operator_cookie(token: str | None = None) -> dict:
-    """Build the HttpOnly session cookie the browser would send."""
-    if token is None:
-        token = auth_module.create_operator_session_token(3600, OPERATOR_TEST_SECRET)
-    return {auth_module.SESSION_COOKIE_NAME: f"{auth_module.SESSION_SIGNED_PREFIX}{token}"}
-
 
 def _valid_config_payload() -> dict:
     return {
@@ -79,7 +66,7 @@ def _valid_config_payload() -> dict:
 
 @pytest.fixture
 def client_with_db(monkeypatch):
-    """In-memory SQLite client: org member reads, operator writes."""
+    """In-memory SQLite client: org member reads, owner/admin writes."""
     install_auth(monkeypatch)
     engine = create_engine(
         "sqlite:///:memory:",
@@ -93,6 +80,7 @@ def client_with_db(monkeypatch):
     db = TestingSessionLocal()
     org = seed_organization(db, "sim-org")
     seed_membership(db, org, "owner", user_id=USER_A)
+    seed_membership(db, org, "member", user_id=USER_B)
     org_id = str(org.id)
     machine = Machine(
         organization_id=org.id,
@@ -186,14 +174,13 @@ def test_simulation_config_validation_rules():
         SimulationConfigBase(**invalid_vib)
 
 
-def test_simulation_config_mutations_require_operator_session(client_with_db):
-    """Every simulation-config mutation (POST, PUT, reset) must be operator-gated.
+def test_simulation_config_mutations_require_org_admin(client_with_db):
+    """Every simulation-config mutation (POST, PUT, reset) requires an org admin.
 
-    Anonymous, forged, expired, and wrong-secret sessions are rejected; a valid
-    operator session is accepted and request validation still applies.
+    Anonymous callers get 401, plain members get 403, and owner/admin members
+    succeed. Tenant scoping still applies (cross-organization -> 404).
     """
     client = client_with_db
-    _set_operator_secret(OPERATOR_TEST_SECRET)
     payload = _valid_config_payload()
     mutations = [
         ("post", "/api/machines/MOTOR-001/simulation-config", payload),
@@ -201,107 +188,71 @@ def test_simulation_config_mutations_require_operator_session(client_with_db):
         ("post", "/api/machines/MOTOR-001/simulation-config/reset", None),
     ]
 
-    forged = _operator_cookie("9999999999.deadbeef")
-    expired = _operator_cookie(
-        auth_module.create_operator_session_token(-60, OPERATOR_TEST_SECRET)
+    org_id = client.headers["X-Organization-Id"]
+    member_client = TestClient(app)
+    member_client.headers.update(auth_headers(USER_B, org_id))
+    bare = TestClient(app)
+
+    for method, url, body in mutations:
+        send = getattr(client, method)
+        kwargs = {"json": body} if body is not None else {}
+
+        anon = getattr(bare, method)(url, **kwargs)
+        assert anon.status_code == 401, f"{method.upper()} {url}: {anon.text}"
+
+        member = getattr(member_client, method)(url, **kwargs)
+        assert member.status_code == 403, f"{method.upper()} {url}: {member.text}"
+
+        allowed = send(url, **kwargs)
+        assert allowed.status_code == 200, f"{method.upper()} {url}: {allowed.text}"
+
+    # Request validation still runs for authenticated callers.
+    invalid = client.put(
+        "/api/machines/MOTOR-001/simulation-config",
+        json=dict(payload, temp_min=50.0, temp_max=30.0),
     )
-    wrong_secret = _operator_cookie(
-        auth_module.create_operator_session_token(3600, "some-other-secret")
-    )
+    assert invalid.status_code == 422
 
-    try:
-        for method, url, body in mutations:
-            send = getattr(client, method)
-            kwargs = {"json": body} if body is not None else {}
-
-            anon = send(url, **kwargs)
-            assert anon.status_code == 401, f"{method.upper()} {url}: {anon.text}"
-
-            for label, cookies in (
-                ("forged", forged),
-                ("expired", expired),
-                ("wrong-secret", wrong_secret),
-            ):
-                rejected = send(url, cookies=cookies, **kwargs)
-                assert rejected.status_code == 401, (
-                    f"{method.upper()} {url} with {label} session: {rejected.status_code}"
-                )
-
-        # A valid operator session is accepted on PUT.
-        put_res = client.put(
-            "/api/machines/MOTOR-001/simulation-config",
-            json=dict(payload, temp_target=33.0),
-            cookies=_operator_cookie(),
-        )
-        assert put_res.status_code == 200
-        assert put_res.json()["temp_target"] == 33.0
-
-        # Request validation still runs for authenticated callers.
-        invalid = client.put(
-            "/api/machines/MOTOR-001/simulation-config",
-            json=dict(payload, temp_min=50.0, temp_max=30.0),
-            cookies=_operator_cookie(),
-        )
-        assert invalid.status_code == 422
-
-        # GET requires an authenticated organization member (Phase 3): the
-        # fixture client carries a member token, a bare client does not.
-        assert TestClient(app).get("/api/machines/MOTOR-001/simulation-config").status_code == 401
-        assert client.get("/api/machines/MOTOR-001/simulation-config").status_code == 200
-
-        # Fail closed when operator session authentication is not configured.
-        _set_operator_secret("")
-        unconfigured = client.post(
-            "/api/machines/MOTOR-001/simulation-config", json=payload
-        )
-        assert unconfigured.status_code == 503
-    finally:
-        _set_operator_secret("")
+    # GET requires an authenticated organization member.
+    assert TestClient(app).get("/api/machines/MOTOR-001/simulation-config").status_code == 401
+    assert client.get("/api/machines/MOTOR-001/simulation-config").status_code == 200
 
 
 def test_simulation_config_api_endpoints(client_with_db):
-    """Verify GET, POST, and Reset endpoints (mutations require a valid operator session)."""
+    """Verify GET, POST, and Reset endpoints (mutations require an org admin)."""
     client = client_with_db
-    _set_operator_secret(OPERATOR_TEST_SECRET)
-    try:
-        # 1. Fetch simulation config for test machine MOTOR-001 (auto-created default)
-        #    GET requires an authenticated organization member (default headers).
-        get_res = client.get("/api/machines/MOTOR-001/simulation-config")
-        assert get_res.status_code == 200
-        data = get_res.json()
-        assert "temp_min" in data
-        assert "simulation_mode" in data
-        assert data["machine_id"] == "MOTOR-001"
+    # 1. Fetch simulation config for test machine MOTOR-001 (auto-created default)
+    #    GET requires an authenticated organization member (default headers).
+    get_res = client.get("/api/machines/MOTOR-001/simulation-config")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert "temp_min" in data
+    assert "simulation_mode" in data
+    assert data["machine_id"] == "MOTOR-001"
 
-        # 2. Update simulation config as an authenticated operator
-        new_config = _valid_config_payload()
-        post_res = client.post(
-            "/api/machines/MOTOR-001/simulation-config",
-            json=new_config,
-            cookies=_operator_cookie(),
-        )
-        assert post_res.status_code == 200
-        saved = post_res.json()
-        assert saved["temp_min"] == 30.0
-        assert saved["temp_max"] == 35.0
-        assert saved["simulation_mode"] == "increasing" or saved["simulation_mode"] == "cycling"
-        assert saved["rpm_target"] == 1800.0
+    # 2. Update simulation config as an organization owner/admin
+    new_config = _valid_config_payload()
+    post_res = client.post(
+        "/api/machines/MOTOR-001/simulation-config",
+        json=new_config,
+    )
+    assert post_res.status_code == 200
+    saved = post_res.json()
+    assert saved["temp_min"] == 30.0
+    assert saved["temp_max"] == 35.0
+    assert saved["simulation_mode"] == "increasing" or saved["simulation_mode"] == "cycling"
+    assert saved["rpm_target"] == 1800.0
 
-        # 3. Verify subsequent GET returns the persisted settings
-        get_after = client.get("/api/machines/MOTOR-001/simulation-config")
-        assert get_after.status_code == 200
-        assert get_after.json()["temp_min"] == 30.0
-        assert get_after.json()["rpm_target"] == 1800.0
+    # 3. Verify subsequent GET returns the persisted settings
+    get_after = client.get("/api/machines/MOTOR-001/simulation-config")
+    assert get_after.status_code == 200
+    assert get_after.json()["temp_min"] == 30.0
+    assert get_after.json()["rpm_target"] == 1800.0
 
-        # 4. Reset to defaults (authenticated)
-        reset_res = client.post(
-            "/api/machines/MOTOR-001/simulation-config/reset",
-            cookies=_operator_cookie(),
-        )
-        assert reset_res.status_code == 200
-        reset_data = reset_res.json()
-        assert reset_data["temp_min"] == 22.0
-        assert reset_data["temp_max"] >= 45.0
-        assert reset_data["rpm_target"] == 1450.0
-    finally:
-        _set_operator_secret("")
+    # 4. Reset to defaults
+    reset_res = client.post("/api/machines/MOTOR-001/simulation-config/reset")
+    assert reset_res.status_code == 200
+    reset_data = reset_res.json()
+    assert reset_data["temp_min"] == 22.0
+    assert reset_data["temp_max"] >= 45.0
+    assert reset_data["rpm_target"] == 1450.0

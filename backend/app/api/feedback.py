@@ -118,6 +118,12 @@ def create_feedback(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Machine '{payload.machine_id}' does not exist in registry.",
         )
+    if machine.is_demo:
+        # Demo feedback would contaminate the ground-truth evaluation pool.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Feedback cannot be recorded against a demo machine.",
+        )
 
     org_id = machine.organization_id
 

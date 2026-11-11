@@ -58,6 +58,7 @@ def response_from_prediction(prediction: Prediction) -> PredictionResponse:
     return PredictionResponse(
         id=prediction.id,
         machine_id=prediction.machine_id,
+        demo_session_id=prediction.demo_session_id,
         timestamp=prediction.timestamp,
         failure_probability=prediction.failure_probability,
         component=prediction.component,

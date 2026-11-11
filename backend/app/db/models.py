@@ -157,6 +157,9 @@ class Machine(Base):
     type = Column(String(100), nullable=False)
     location = Column(String(150), nullable=False)
     status = Column(String(50), default="Healthy", nullable=False)  # Healthy, Warning, Critical, Maintenance
+    # Demo isolation: a demo machine belongs to exactly one demo session and is
+    # never used by device ingestion, fleet KPIs or ML training/evaluation.
+    is_demo = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
     rated_rpm = Column(Float, nullable=True)
     rated_current = Column(Float, nullable=True)
     max_temp = Column(Float, nullable=True)
@@ -180,6 +183,52 @@ class Machine(Base):
             "status IN ('Healthy', 'Warning', 'Critical', 'Maintenance')",
             name="ck_machines_status",
         ),
+    )
+
+
+# ============================================================================
+# 1b. DEMO SESSIONS TABLE (controlled, organization-scoped demo context)
+# ============================================================================
+class DemoSession(Base):
+    """One controlled demo session bound to exactly one dedicated demo machine.
+
+    Invariants enforced by the API and (in PostgreSQL) by the migration:
+    * ``machine_id`` is unique, so a session can never share a machine with a
+      real asset or another session.
+    * The demo machine is always ``is_demo=True`` and is rejected by device
+      ingestion, heartbeats and fleet statistics.
+    * MANUAL_DEMO readings/alerts/predictions reference the session, which is
+      what makes scoped reset possible without touching WOKWI/REAL_HARDWARE.
+    """
+
+    __tablename__ = "demo_sessions"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    machine_id = Column(
+        String(50),
+        ForeignKey("machines.machine_id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+    name = Column(String(120), nullable=False)
+    status = Column(String(20), default="ACTIVE", nullable=False, server_default="ACTIVE")
+    created_by = Column(Uuid(as_uuid=True), nullable=True)  # Supabase auth.users.id
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id", "id", name="uq_demo_sessions_organization_id"
+        ),
+        CheckConstraint("status IN ('ACTIVE', 'CLOSED')", name="ck_demo_sessions_status"),
+        Index("ix_demo_sessions_organization_status", "organization_id", "status"),
     )
 
 
@@ -242,11 +291,18 @@ class SensorReading(Base):
         index=True,
         nullable=False,
     )
+    # NULL only for MANUAL_DEMO rows: demo readings have no device identity.
     device_id = Column(
         String(100),
         ForeignKey("devices.device_id", ondelete="CASCADE"),
         index=True,
-        nullable=False,
+        nullable=True,
+    )
+    demo_session_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("demo_sessions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
     )
     timestamp = Column(DateTime(timezone=True), default=_utcnow, index=True, nullable=False)
 
@@ -266,7 +322,19 @@ class SensorReading(Base):
     __table_args__ = (
         Index("ix_sensor_readings_machine_timestamp", "machine_id", "timestamp"),
         Index("ix_sensor_readings_device_timestamp", "device_id", "timestamp"),
-        CheckConstraint("source IN ('WOKWI', 'REAL_HARDWARE')", name="ck_sensor_readings_source"),
+        CheckConstraint(
+            "source IN ('WOKWI', 'REAL_HARDWARE', 'MANUAL_DEMO')",
+            name="ck_sensor_readings_source",
+        ),
+        # Demo isolation at the database layer: a demo reading has a session and
+        # no device; a device reading has a device and no session. This makes it
+        # impossible to impersonate a device or attach a demo record to a
+        # WOKWI/REAL_HARDWARE provenance.
+        CheckConstraint(
+            "(source = 'MANUAL_DEMO' AND demo_session_id IS NOT NULL AND device_id IS NULL) "
+            "OR (source IN ('WOKWI', 'REAL_HARDWARE') AND demo_session_id IS NULL AND device_id IS NOT NULL)",
+            name="ck_sensor_readings_demo_coherence",
+        ),
     )
 
 
@@ -333,6 +401,12 @@ class Prediction(Base):
         index=True,
         nullable=False,
     )
+    demo_session_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("demo_sessions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     timestamp = Column(DateTime(timezone=True), default=_utcnow, index=True, nullable=False)
 
     failure_probability = Column(Float, nullable=False)
@@ -380,6 +454,12 @@ class Alert(Base):
         ForeignKey("machines.machine_id", ondelete="CASCADE"),
         index=True,
         nullable=False,
+    )
+    demo_session_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("demo_sessions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
     )
     alert_type = Column(String(100), nullable=False)
     severity = Column(String(50), default="Warning", nullable=False)  # Critical, Warning, Info

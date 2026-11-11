@@ -30,6 +30,12 @@ def collect_ground_truth_rows(db: Session) -> List[Dict[str, Any]]:
         if record.prediction_id is not None:
             prediction = db.query(Prediction).filter(Prediction.id == record.prediction_id).first()
         machine = db.query(Machine).filter(Machine.machine_id == record.machine_id).first()
+        # Demo data must never train or evaluate the governed model.
+        if (
+            (machine is not None and machine.is_demo)
+            or (prediction is not None and prediction.demo_session_id is not None)
+        ):
+            continue
         feature_importance: Dict[str, float] = {}
         failure_probability: Optional[float] = None
         if prediction is not None:

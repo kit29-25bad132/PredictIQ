@@ -69,6 +69,13 @@ def ingest_sensor_data(payload: SensorDataInput, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Machine '{payload.machine_id}' is not registered.",
         )
+    if machine.is_demo:
+        # Demo machines accept readings only through /api/demo-sessions/{id}/readings
+        # (MANUAL_DEMO provenance). A device must never write demo data.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Demo machines do not accept device telemetry.",
+        )
 
     device = db.query(Device).filter(Device.device_id == payload.device_id).first()
     if device is None:
@@ -272,15 +279,14 @@ def get_data_collection_status(
     db: Session = Depends(get_db),
 ):
     org = ctx.organization_id
-    total_readings = (
-        db.query(SensorReading).filter(SensorReading.organization_id == org).count()
+    # Data collection reflects real device telemetry only: MANUAL_DEMO rows
+    # must never make the fleet look "connected".
+    real_readings = db.query(SensorReading).filter(
+        SensorReading.organization_id == org,
+        SensorReading.source != "MANUAL_DEMO",
     )
-    latest_reading = (
-        db.query(SensorReading)
-        .filter(SensorReading.organization_id == org)
-        .order_by(desc(SensorReading.timestamp))
-        .first()
-    )
+    total_readings = real_readings.count()
+    latest_reading = real_readings.order_by(desc(SensorReading.timestamp)).first()
 
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=DEVICE_TIMEOUT_SECONDS)
     active_devices = (

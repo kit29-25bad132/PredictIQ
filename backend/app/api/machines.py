@@ -97,6 +97,7 @@ def _machine_response(machine: Machine, db: Session, organization_id) -> Machine
         type=machine.type,
         location=machine.location,
         status=machine.status,
+        is_demo=machine.is_demo,
         specifications=MachineSpecifications(
             rated_rpm=machine.rated_rpm,
             rated_current=machine.rated_current,
@@ -115,15 +116,17 @@ def _machine_response(machine: Machine, db: Session, organization_id) -> Machine
 @router.get("/machines", response_model=List[MachineResponse],
             summary="List the organization's industrial machines")
 def list_machines(
+    include_demo: bool = Query(
+        default=False,
+        description="Include demo-session machines (hidden by default so demos never pollute the fleet).",
+    ),
     ctx: OrganizationContext = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    machines = (
-        db.query(Machine)
-        .filter(Machine.organization_id == ctx.organization_id)
-        .order_by(Machine.created_at.desc())
-        .all()
-    )
+    query = db.query(Machine).filter(Machine.organization_id == ctx.organization_id)
+    if not include_demo:
+        query = query.filter(Machine.is_demo.is_(False))
+    machines = query.order_by(Machine.created_at.desc()).all()
     return [_machine_response(m, db, ctx.organization_id) for m in machines]
 
 
@@ -184,6 +187,7 @@ def create_machine(data: MachineCreate, db: Session, organization_id) -> Machine
         type=new_machine.type,
         location=new_machine.location,
         status=new_machine.status,
+        is_demo=new_machine.is_demo,
         specifications=MachineSpecifications(
             rated_rpm=new_machine.rated_rpm,
             rated_current=new_machine.rated_current,
@@ -236,6 +240,11 @@ def register_device(payload: DeviceCreate, db: Session, organization_id=None) ->
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Target machine '{payload.machine_id}' was not found.",
+        )
+    if machine.is_demo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Demo machines cannot be assigned physical devices.",
         )
 
     existing_dev = db.query(Device).filter(Device.device_id == payload.device_id).first()
@@ -377,6 +386,11 @@ def record_device_heartbeat(payload: DeviceHeartbeatInput, db: Session = Depends
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Device's machine no longer exists.",
+        )
+    if machine.is_demo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Demo machines do not accept device heartbeats.",
         )
 
     try:
