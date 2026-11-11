@@ -13,8 +13,11 @@ from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from backend.app.core.auth import require_operator_session
-from backend.app.core.tenant import OrganizationContext, require_org_member
+from backend.app.core.tenant import (
+    OrganizationContext,
+    require_org_admin,
+    require_org_member,
+)
 from backend.app.db.database import get_db
 from backend.app.db.models import Machine, MachineSimulationConfig
 from backend.app.schemas.simulation import (
@@ -27,10 +30,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Digital Twin Simulation Configuration"])
 
-# Mutations (POST/PUT/reset) require a valid operator session cookie, matching
-# the operator-gate pattern in operator.py. The GET stays public so the
-# dashboard can read simulation parameters without credentials.
-_AUTH = Depends(require_operator_session)
+# Reads require any active organization member (resolved via Supabase JWT);
+# mutations require an organization admin/owner. Everything is scoped to the
+# caller's organization, so a machine id from another tenant resolves to 404.
 
 
 def _get_or_create_config(
@@ -120,21 +122,20 @@ def get_simulation_config(
     "/machines/{machine_id}/simulation-config",
     response_model=SimulationConfigResponse,
     summary="Save simulation configuration for a machine",
-    dependencies=[_AUTH],
 )
 @router.put(
     "/machines/{machine_id}/simulation-config",
     response_model=SimulationConfigResponse,
     summary="Update simulation configuration for a machine",
-    dependencies=[_AUTH],
 )
 def update_simulation_config(
     machine_id: str,
     payload: SimulationConfigUpdate,
+    ctx: OrganizationContext = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ) -> SimulationConfigResponse:
     """Updates and validates simulation parameters for Temperature, Current, RPM, and Vibration."""
-    config = _get_or_create_config(machine_id, db)
+    config = _get_or_create_config(machine_id, db, ctx.organization_id)
 
     # Apply all validated fields
     data = payload.model_dump()
@@ -153,14 +154,21 @@ def update_simulation_config(
     "/machines/{machine_id}/simulation-config/reset",
     response_model=SimulationConfigResponse,
     summary="Reset simulation configuration to factory defaults",
-    dependencies=[_AUTH],
 )
 def reset_simulation_config(
     machine_id: str,
+    ctx: OrganizationContext = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ) -> SimulationConfigResponse:
     """Resets machine simulation configuration to baseline defaults."""
-    machine = db.query(Machine).filter(Machine.machine_id == machine_id).first()
+    machine = (
+        db.query(Machine)
+        .filter(
+            Machine.machine_id == machine_id,
+            Machine.organization_id == ctx.organization_id,
+        )
+        .first()
+    )
     if not machine:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

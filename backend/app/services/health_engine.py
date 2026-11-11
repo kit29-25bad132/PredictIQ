@@ -115,6 +115,7 @@ def evaluate_reading(machine: Machine, reading: SensorReading, db: Session) -> H
                 Alert(
                     organization_id=machine.organization_id,
                     machine_id=machine.machine_id,
+                    demo_session_id=reading.demo_session_id,
                     alert_type=alert_type,
                     severity=severity,
                     message=f"{alert_type.replace('_', ' ').title()} detected for machine {machine.machine_id}.",
@@ -182,6 +183,7 @@ def _maybe_generate_prototype_prediction(
             Prediction(
                 organization_id=machine.organization_id,
                 machine_id=machine.machine_id,
+                demo_session_id=reading.demo_session_id,
                 timestamp=observed_at,
                 failure_probability=result["failure_probability"],
                 component=result["component"],

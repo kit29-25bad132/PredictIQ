@@ -6,6 +6,7 @@ maintenance records, and alerts. Strictly rejects invalid, NaN, or infinite numb
 
 from __future__ import annotations
 
+import uuid
 from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime, timezone
 import math
@@ -15,15 +16,17 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # 1. SENSOR TELEMETRY SCHEMAS
 # ============================================================================
 
-class SensorDataInput(BaseModel):
-    device_id: str = Field(..., example="ESP32_001", min_length=1, max_length=100, description="Unique ESP32 Node ID")
-    machine_id: str = Field(..., example="M001", min_length=1, max_length=50, description="Unique Machine Asset ID")
-    timestamp: datetime = Field(..., description="Observation timestamp")
+class SensorChannelFields(BaseModel):
+    """Physical-envelope validation shared by device and demo telemetry.
+
+    Extracted so MANUAL_DEMO ingestion enforces exactly the same NaN/Inf and
+    range rules as WOKWI/REAL_HARDWARE telemetry instead of drifting.
+    """
+
     temperature: Optional[float] = Field(default=None, example=72.4, description="Temperature in Celsius (°C)")
     vibration: Optional[float] = Field(default=None, example=3.8, description="Vibration velocity RMS in mm/s")
     current: Optional[float] = Field(default=None, example=8.7, description="Phase current in Amperes (A)")
     rpm: Optional[float] = Field(default=None, example=1450.0, description="Rotational speed in RPM")
-    source: Literal["WOKWI", "REAL_HARDWARE"] = Field(..., example="REAL_HARDWARE")
 
     @field_validator("temperature", "vibration", "current", "rpm")
     @classmethod
@@ -60,6 +63,14 @@ class SensorDataInput(BaseModel):
             raise ValueError(f"RPM value {v} cannot be negative or exceed 60,000 RPM")
         return v
 
+
+class SensorDataInput(SensorChannelFields):
+    device_id: str = Field(..., example="ESP32_001", min_length=1, max_length=100, description="Unique ESP32 Node ID")
+    machine_id: str = Field(..., example="M001", min_length=1, max_length=50, description="Unique Machine Asset ID")
+    timestamp: datetime = Field(..., description="Observation timestamp")
+    # Device ingestion contract is unchanged: MANUAL_DEMO is never accepted here.
+    source: Literal["WOKWI", "REAL_HARDWARE"] = Field(..., example="REAL_HARDWARE")
+
 class SensorDataResponse(BaseModel):
     success: bool = Field(default=True, example=True)
     id: int = Field(..., example=1)
@@ -67,7 +78,8 @@ class SensorDataResponse(BaseModel):
 class SensorReadingResponse(BaseModel):
     id: int
     machine_id: str
-    device_id: str
+    device_id: Optional[str] = None  # None for MANUAL_DEMO readings
+    demo_session_id: Optional[uuid.UUID] = None
     timestamp: datetime
     temperature: Optional[float] = None
     vibration: Optional[float] = None
@@ -168,6 +180,7 @@ class MachineResponse(BaseModel):
     type: str
     location: str
     status: str
+    is_demo: bool = False
     specifications: Optional[MachineSpecifications] = None
     created_at: datetime
     devices: Optional[List[DeviceResponse]] = None
@@ -225,6 +238,7 @@ class AIModelStatusResponse(BaseModel):
 class PredictionResponse(BaseModel):
     id: Optional[int] = None
     machine_id: str
+    demo_session_id: Optional[uuid.UUID] = None
     timestamp: datetime
     failure_probability: Optional[float] = None
     component: Optional[str] = None
@@ -296,6 +310,7 @@ class PredictionInput(BaseModel):
 class AlertResponse(BaseModel):
     id: int
     machine_id: str
+    demo_session_id: Optional[uuid.UUID] = None
     alert_type: str
     severity: str
     message: str

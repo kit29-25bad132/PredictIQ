@@ -10,8 +10,10 @@ System endpoints:
 - GET  /api/ready           Readiness (DB connectivity, see api/health.py).
 - GET  /api/stats           Fleet statistics from PostgreSQL (dashboard KPIs).
 
-Read endpoints are public by design (the dashboard has no user accounts yet);
-every mutating endpoint is gated by the API-key write gate (app/core/auth.py).
+Read endpoints resolve the caller's Supabase identity and organization
+membership (app/core/tenant.py); device ingest and heartbeat use the API-key
+write gate (app/core/auth.py). Demo-session data is deliberately excluded from
+fleet health/statistics so a demo never masquerades as production telemetry.
 """
 
 from contextlib import asynccontextmanager
@@ -33,7 +35,7 @@ from backend.app.db.models import (
     MaintenanceRecord,
     SensorReading,
 )
-from backend.app.api import alerts, machines, maintenance, predictions, sensors, feedback, health, auth, operator, assistant, simulation, user, organizations
+from backend.app.api import alerts, machines, maintenance, predictions, sensors, feedback, health, auth, operator, assistant, simulation, user, organizations, demo_sessions
 from backend.app.db.database import Base, engine
 
 settings = get_settings()
@@ -87,6 +89,7 @@ app.include_router(operator.router, prefix="/api/operator")
 app.include_router(assistant.router, prefix="/api")
 app.include_router(simulation.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
+app.include_router(demo_sessions.router, prefix="/api")
 
 
 def _liveness_db():
@@ -119,10 +122,17 @@ def health_check(db: Any = Depends(_liveness_db)) -> Dict[str, Any]:
         "environment": settings.environment,
         "timestamp": _utc_now_iso(),
         "database": "PostgreSQL" if SessionLocal is not None else "NOT_CONFIGURED",
-        "active_machines": _safe_count(func.count(Machine.id), Machine, db),
+        "active_machines": _safe_count(
+            func.count(Machine.id), Machine, db, Machine.is_demo.is_(False)
+        ),
         "registered_devices": _safe_count(func.count(Device.id), Device, db),
         "connected_esp32_devices": _safe_connected_devices(db),
-        "total_sensor_readings": _safe_count(func.count(SensorReading.id), SensorReading, db),
+        "total_sensor_readings": _safe_count(
+            func.count(SensorReading.id),
+            SensorReading,
+            db,
+            SensorReading.source != "MANUAL_DEMO",
+        ),
     }
 
 
@@ -140,24 +150,26 @@ def fleet_stats(
     active_devices = _org_connected_devices(db, org_id)
     total_readings = _org_count(db, SensorReading, org_id)
     return {
-        "total_machines": _org_count(db, Machine, org_id),
+        "total_machines": _org_count(db, Machine, org_id, Machine.is_demo.is_(False)),
         "total_devices": _org_count(db, Device, org_id),
         "connected_devices": active_devices,
-        "total_sensor_readings": total_readings,
+        "total_sensor_readings": _org_count(
+            db, SensorReading, org_id, SensorReading.source != "MANUAL_DEMO"
+        ),
         "total_maintenance_records": _org_count(db, MaintenanceRecord, org_id),
         "active_alerts": _org_active_alerts(db, org_id),
         "data_collection_status": "ACTIVE" if active_devices > 0 else "WAITING",
     }
 
 
-def _org_count(db: Any, model, organization_id) -> int:
+def _org_count(db: Any, model, organization_id, *criteria) -> int:
     """Count rows for one organization; never cross-tenant."""
     if db is None:
         return 0
     try:
         return int(
             db.query(func.count(model.id))
-            .filter(model.organization_id == organization_id)
+            .filter(model.organization_id == organization_id, *criteria)
             .scalar()
             or 0
         )
@@ -194,6 +206,7 @@ def _org_active_alerts(db: Any, organization_id) -> int:
             .filter(
                 Alert.organization_id == organization_id,
                 Alert.status == "ACTIVE",
+                Alert.demo_session_id.is_(None),
             )
             .scalar()
             or 0
@@ -208,12 +221,15 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _safe_count(statement, model, db: Any) -> int:
+def _safe_count(statement, model, db: Any, *criteria) -> int:
     """Count rows; no database or an unreachable one yields 0 rather than a 500 on a liveness probe."""
     if db is None:
         return 0
     try:
-        return int(db.query(statement).scalar() or 0)
+        query = db.query(statement)
+        if criteria:
+            query = query.filter(*criteria)
+        return int(query.scalar() or 0)
     except Exception:
         return 0
 
