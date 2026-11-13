@@ -11,7 +11,15 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { forwardApiRequest, resolveProxyTarget } from "../apiProxy";
+import { forwardApiRequest, resolveProxyTarget } from "../apiProxy.js";
+
+// The proxy streams the original request body to the backend byte-for-byte.
+// Vercel's default body parser would consume that stream before it reaches us.
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 function sendJson(
   res: ServerResponse,

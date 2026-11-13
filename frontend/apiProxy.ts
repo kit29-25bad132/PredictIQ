@@ -14,8 +14,8 @@
  * dependency beyond express, which the Node server already requires.
  */
 
-import http from "http";
-import https from "https";
+import * as http from "http";
+import * as https from "https";
 import { URL } from "url";
 import type { NextFunction, Request, Response } from "express";
 
