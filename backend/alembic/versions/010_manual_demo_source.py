@@ -13,9 +13,16 @@ Existing rows are never rewritten, and the migration verifies that:
 * every existing reading already has a ``device_id`` (so making it nullable
   cannot hide corrupt legacy data);
 * no reading uses an unknown ``source``;
-* no ``demo_session_id`` is already populated;
+* the database is at a clean revision-009 schema (no demo artifact was applied
+  by hand), and any pre-existing ``demo_session_id`` is empty;
 * row counts of machines/sensor_readings/alerts/predictions/feedback_records
   are identical before and after.
+
+Preflight probes only reference columns that exist at revision 009. The
+``demo_session_id`` columns are introduced by this revision, so they are read
+only when inspection proves they already exist; a clean 009 database never
+queries them. All checks run before any DDL, and Alembic wraps the revision in
+a transaction on PostgreSQL, so a failed preflight leaves no partial schema.
 
 Downgrade REFUSES when any demo data exists (any ``demo_sessions`` row or any
 ``MANUAL_DEMO`` reading) instead of silently destroying it. The operator must
@@ -59,7 +66,50 @@ def _snapshot_counts(bind) -> Dict[str, int]:
     return {table: _rows(bind, f"SELECT count(*) FROM {table}") for table in SNAPSHOT_TABLES}
 
 
+def _column_names(bind, table: str) -> set:
+    return {column["name"] for column in sa.inspect(bind).get_columns(table)}
+
+
+def _refuse_partial_demo_schema(bind) -> None:
+    """Abort before DDL when revision 010 was already (partially) applied.
+
+    A clean revision-009 database has none of these artifacts. The only
+    ``demo_session_id`` queries happen after inspection proves the column
+    exists, so this never references a column added later in ``upgrade()``.
+    """
+    inspector = sa.inspect(bind)
+    artifacts = []
+    if inspector.has_table("demo_sessions"):
+        artifacts.append("demo_sessions table")
+    if "is_demo" in _column_names(bind, "machines"):
+        artifacts.append("machines.is_demo")
+
+    for table in DEMO_FK_TABLES:
+        if "demo_session_id" not in _column_names(bind, table):
+            continue
+        populated = _rows(
+            bind, f"SELECT count(*) FROM {table} WHERE demo_session_id IS NOT NULL"
+        )
+        if populated:
+            raise RuntimeError(
+                "Refusing migration 010: "
+                f"{table}.demo_session_id already exists and is populated on "
+                f"{populated} row(s). The demo schema is partially applied; "
+                "reconcile the database before rerunning."
+            )
+        artifacts.append(f"{table}.demo_session_id")
+
+    if artifacts:
+        raise RuntimeError(
+            "Refusing migration 010: demo schema artifacts already exist "
+            f"({', '.join(sorted(artifacts))}). This database is not at a clean "
+            "revision 009; reconcile it before rerunning."
+        )
+
+
 def _preflight(bind) -> Dict[str, int]:
+    _refuse_partial_demo_schema(bind)
+
     unknown = bind.execute(
         sa.text(
             "SELECT DISTINCT source FROM sensor_readings "
@@ -77,15 +127,6 @@ def _preflight(bind) -> Dict[str, int]:
         raise RuntimeError(
             "Refusing migration 010: "
             f"{null_devices} sensor_readings row(s) already have a NULL device_id."
-        )
-
-    existing_session_ids = _rows(
-        bind, "SELECT count(*) FROM sensor_readings WHERE demo_session_id IS NOT NULL"
-    )
-    if existing_session_ids:
-        raise RuntimeError(
-            "Refusing migration 010: demo_session_id already populated on "
-            f"{existing_session_ids} sensor_readings row(s)."
         )
 
     return _snapshot_counts(bind)
