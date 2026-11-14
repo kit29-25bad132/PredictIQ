@@ -50,7 +50,15 @@ const THRESHOLDS_STORAGE_KEY = 'predictiq_alarm_thresholds';
 const AUDIO_SETTINGS_STORAGE_KEY = 'predictiq_alarm_audio_settings';
 const INCIDENTS_STORAGE_KEY = 'predictiq_alarm_incidents_v1';
 
-export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AlarmProvider: React.FC<{
+  children: React.ReactNode;
+  /**
+   * When false (public demo), the provider never calls authenticated alert
+   * endpoints and never issues acknowledgements/resolutions. It still supplies
+   * thresholds/state so the shared Header and dashboard panels render.
+   */
+  backendSync?: boolean;
+}> = ({ children, backendSync = true }) => {
   // 1. Thresholds state
   const [thresholds, setThresholds] = useState<AlarmThresholds>(() => {
     if (typeof window !== 'undefined') {
@@ -86,6 +94,9 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isAudioPlaying, setIsAudioPlaying] = useState<boolean>(false);
   const [audioState, setAudioState] = useState<AudioState>(audioAlarmService.getAudioState());
   const [alarmIncidents, setAlarmIncidents] = useState<AlarmIncidentRecord[]>(() => {
+    // Demo/read-only surfaces start clean: never surface incident history cached
+    // by a previous authenticated session in the same browser.
+    if (!backendSync) return [];
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem(INCIDENTS_STORAGE_KEY);
       if (saved) {
@@ -118,12 +129,13 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
-  // Save incidents to localStorage on change
+  // Save incidents to localStorage on change (authenticated surfaces only).
   useEffect(() => {
+    if (!backendSync) return;
     if (typeof window !== 'undefined') {
       localStorage.setItem(INCIDENTS_STORAGE_KEY, JSON.stringify(alarmIncidents.slice(0, 50)));
     }
-  }, [alarmIncidents]);
+  }, [alarmIncidents, backendSync]);
 
   // Validation & Threshold update
   const updateThresholds = useCallback((newThresholds: Partial<AlarmThresholds>) => {
@@ -225,28 +237,28 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
     // If backend integer ID, attempt acknowledging via API
     const numId = Number(id);
-    if (!isNaN(numId) && numId > 0) {
+    if (backendSync && !isNaN(numId) && numId > 0) {
       try {
         await api.acknowledgeAlert(numId);
       } catch (e) {
         // Continue with local acknowledgement
       }
     }
-  }, []);
+  }, [backendSync]);
 
   const resolveIncident = useCallback(async (id: string) => {
     setAlarmIncidents(prev =>
       prev.map(inc => (inc.id === id ? { ...inc, status: 'RESOLVED', resolvedAt: new Date().toISOString() } : inc))
     );
     const numId = Number(id);
-    if (!isNaN(numId) && numId > 0) {
+    if (backendSync && !isNaN(numId) && numId > 0) {
       try {
         await api.resolveAlert(numId);
       } catch (e) {
         // Continue with local resolution
       }
     }
-  }, []);
+  }, [backendSync]);
 
   const clearAllAlarms = useCallback(() => {
     audioAlarmService.stopAlarm();
@@ -509,6 +521,8 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Load backend alerts into incidents history
   useEffect(() => {
+    // Read-only / demo surfaces must not query authenticated alert endpoints.
+    if (!backendSync) return;
     const syncBackendAlerts = async () => {
       try {
         const backendAlerts = await api.getAlerts();
@@ -541,7 +555,7 @@ export const AlarmProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     };
     syncBackendAlerts();
-  }, [thresholds]);
+  }, [thresholds, backendSync]);
 
   const value: AlarmContextType = {
     thresholds,

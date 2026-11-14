@@ -8,7 +8,7 @@ export type MachineType =
   | 'Cooling Tower Fan' 
   | 'Industrial Gearbox';
 
-export type DataSource = 'WOKWI' | 'REAL_HARDWARE';
+export type DataSource = 'WOKWI' | 'REAL_HARDWARE' | 'MANUAL_DEMO';
 
 export interface MachineSpecifications {
   ratedRPM?: number | null;
@@ -126,10 +126,11 @@ export interface FleetStats {
 }
 
 export interface DataCollectionStatus {
-  sensor_status: 'ONLINE' | 'OFFLINE';
+  /** DEMO is explicit: a demo dataset is not a connected hardware fleet. */
+  sensor_status: 'ONLINE' | 'OFFLINE' | 'DEMO';
   last_reading?: string | null;
   total_readings: number;
-  data_collection: 'ACTIVE' | 'WAITING';
+  data_collection: 'ACTIVE' | 'WAITING' | 'DEMO';
   active_devices_count: number;
   message: string;
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Machine, SensorReading } from '../types';
 import api from '../services/api';
+import type { FleetDataService } from '../services/dataService';
 import {
   Database,
   Download,
@@ -17,12 +18,18 @@ interface SensorDataPageProps {
   machines: Machine[];
   onOpenManualModal: (id?: string) => void;
   onSelectMachine: (id: string) => void;
+  /** Defaults to the authenticated API; the public demo passes `demoApi`. */
+  dataService?: FleetDataService;
+  /** Public demo: hide telemetry injection. */
+  readOnly?: boolean;
 }
 
 export const SensorDataPage: React.FC<SensorDataPageProps> = ({
   machines,
   onOpenManualModal,
   onSelectMachine,
+  dataService = api,
+  readOnly = false,
 }) => {
   const [readings, setReadings] = useState<SensorReading[]>([]);
   const [selectedMachine, setSelectedMachine] = useState<string>('ALL');
@@ -33,11 +40,11 @@ export const SensorDataPage: React.FC<SensorDataPageProps> = ({
     setIsLoading(true);
     try {
       if (selectedMachine !== 'ALL') {
-        const data = await api.getSensorData(selectedMachine, limit);
+        const data = await dataService.getSensorData(selectedMachine, limit);
         setReadings(data);
       } else if (machines.length > 0) {
         // Fetch readings across machines
-        const promises = machines.map((m) => api.getSensorData(m.machine_id, Math.floor(limit / machines.length)));
+        const promises = machines.map((m) => dataService.getSensorData(m.machine_id, Math.floor(limit / machines.length)));
         const results = await Promise.all(promises);
         const combined = results.flat().sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         setReadings(combined);
@@ -104,13 +111,15 @@ export const SensorDataPage: React.FC<SensorDataPageProps> = ({
             <span>Export CSV</span>
           </button>
 
-          <button
-            onClick={() => onOpenManualModal()}
-            className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
-          >
-            <Plus className="h-3.5 w-3.5 stroke-[3]" />
-            <span>Manual Real Input</span>
-          </button>
+          {!readOnly && (
+            <button
+              onClick={() => onOpenManualModal()}
+              className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
+            >
+              <Plus className="h-3.5 w-3.5 stroke-[3]" />
+              <span>Manual Real Input</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -194,7 +203,7 @@ export const SensorDataPage: React.FC<SensorDataPageProps> = ({
                       </button>
                     </td>
                     <td className="py-3 px-4 text-slate-400">
-                      {r.device_id || 'ESP32'}
+                      {r.device_id || (r.source === 'MANUAL_DEMO' ? 'DEMO (no device)' : 'ESP32')}
                     </td>
                     <td className="py-3 px-4">
                       <span className={r.temperature > 80 ? 'text-rose-400 font-bold' : r.temperature > 74 ? 'text-amber-400' : 'text-slate-200'}>

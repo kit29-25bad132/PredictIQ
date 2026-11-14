@@ -29,9 +29,15 @@ interface HomePageProps {
   onNavigate: (route: 'dashboard') => void;
   /** Public landing page stays reachable without sign-in; this opens /signin. */
   onSignIn: () => void;
+  /** Opens the unauthenticated, read-only public demo at /demo. */
+  onExploreDemo: () => void;
 }
 
-export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onSignIn }) => {
+export const HomePage: React.FC<HomePageProps> = ({
+  onNavigate,
+  onSignIn,
+  onExploreDemo,
+}) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const scrollToSection = (id: string) => {
@@ -212,6 +218,14 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onSignIn }) => {
           {/* Action CTAs */}
           <div className="hidden md:flex items-center gap-3">
             <button
+              id="btn-nav-explore-demo"
+              onClick={onExploreDemo}
+              className="flex items-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-xs font-bold text-cyan-300 hover:border-cyan-400 hover:bg-cyan-500/20 transition-all"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-cyan-300" />
+              <span>Explore Demo</span>
+            </button>
+            <button
               id="btn-nav-signin"
               onClick={onSignIn}
               className="flex items-center gap-2 rounded-xl border border-slate-700/80 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-slate-200 hover:border-cyan-500/40 hover:bg-slate-800 transition-all"
@@ -277,6 +291,17 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onSignIn }) => {
 
               <div className="border-t border-slate-800 pt-3 flex flex-col gap-2">
                 <button
+                  id="btn-mobile-explore-demo"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    onExploreDemo();
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-cyan-400 py-2.5 text-xs font-bold text-slate-950"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Explore Demo (read-only)</span>
+                </button>
+                <button
                   id="btn-mobile-signin"
                   onClick={() => {
                     setIsMobileMenuOpen(false);
@@ -331,6 +356,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onSignIn }) => {
 
             {/* Action Buttons */}
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3 sm:gap-4">
+              <button
+                id="btn-hero-explore-demo"
+                onClick={onExploreDemo}
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-cyan-400 px-6 py-3 text-sm font-black text-slate-950 transition-all hover:brightness-110 shadow-lg shadow-cyan-500/25 hover:scale-[1.02]"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>Explore Demo — No Sign-In</span>
+                <ArrowRight className="h-4 w-4" />
+              </button>
+
               <button
                 id="btn-hero-getstarted"
                 onClick={() => onNavigate('dashboard')}
@@ -712,6 +747,13 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onSignIn }) => {
             <div>
               <h5 className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-3">Application</h5>
               <div className="space-y-2 text-xs">
+                <button
+                  id="btn-footer-explore-demo"
+                  onClick={onExploreDemo}
+                  className="block text-amber-300 hover:text-amber-200 font-semibold"
+                >
+                  Explore the public demo &rarr;
+                </button>
                 <button
                   onClick={() => onNavigate('dashboard')}
                   className="block text-cyan-400 hover:text-cyan-300 font-semibold"

@@ -3,6 +3,7 @@ import { Machine, FleetStats, DataCollectionStatus, AIModelStatus, SensorReading
 import MetricCard from '../components/MetricCard';
 import MachineCard from '../components/MachineCard';
 import api from '../services/api';
+import type { FleetDataService } from '../services/dataService';
 import {
   Cpu,
   CheckCircle2,
@@ -40,6 +41,12 @@ interface DashboardPageProps {
   onOpenManualModal: (machineId?: string) => void;
   onOpenAddMachineModal: () => void;
   onRefresh: () => void;
+  /** Defaults to the authenticated API; the public demo passes `demoApi`. */
+  dataService?: FleetDataService;
+  /** Public demo: hide every mutation control. */
+  readOnly?: boolean;
+  /** Demo labels/provenance, never a different data path. */
+  demoMode?: boolean;
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
@@ -50,6 +57,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   onOpenManualModal,
   onOpenAddMachineModal,
   onRefresh,
+  dataService = api,
+  readOnly = false,
+  demoMode = false,
 }) => {
   const { thresholds } = useAlarm();
 
@@ -73,8 +83,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const fetchStatuses = async () => {
     try {
       const [ds, ais] = await Promise.all([
-        api.getDataStatus().catch(() => null),
-        api.getAIModelStatus().catch(() => null),
+        dataService.getDataStatus().catch(() => null),
+        dataService.getAIModelStatus().catch(() => null),
       ]);
       if (ds) setDataStatus(ds);
       if (ais) setAiStatus(ais);
@@ -87,7 +97,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     if (!machineId) return;
     try {
       setTelemetryLoading(true);
-      const history = await api.getSensorHistory(machineId, 10);
+      const history = await dataService.getSensorHistory(machineId, 10);
       setRecentTelemetry(history);
     } catch (err) {
       console.warn('Telemetry fetch error:', err);
@@ -132,13 +142,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   });
 
   // Calculate actual device connectivity state
-  const deviceConnectionState: 'ONLINE' | 'OFFLINE' | 'WAITING' = useMemo(() => {
+  const deviceConnectionState: 'ONLINE' | 'OFFLINE' | 'WAITING' | 'DEMO' = useMemo(() => {
+    // Demo data has no hardware behind it: never present it as a connected fleet.
+    if (demoMode) return 'DEMO';
     if (!backendOnline) return 'OFFLINE';
     if (!dataStatus) return 'WAITING';
     if (dataStatus.sensor_status === 'ONLINE') return 'ONLINE';
     if (dataStatus.total_readings > 0) return 'OFFLINE';
     return 'WAITING';
-  }, [backendOnline, dataStatus]);
+  }, [backendOnline, dataStatus, demoMode]);
 
   const totalReadings = backendOnline ? (dataStatus?.total_readings ?? stats.total_sensor_readings ?? 0) : 0;
   const lastReadingTime = backendOnline && (latestReading?.timestamp || dataStatus?.last_reading)
@@ -171,8 +183,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 <h2 id="user-greeting-heading" className="text-xl sm:text-2xl font-black text-white tracking-tight">
                   Industrial Fleet Overview
                 </h2>
-                <span className="rounded-md bg-cyan-500/20 px-2 py-0.5 text-[11px] font-bold text-cyan-300 border border-cyan-500/30">
-                  Public Read View
+                <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold border ${
+                  demoMode
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                }`}>
+                  {demoMode ? 'Demo Mode' : 'Public Read View'}
                 </span>
               </div>
 
@@ -182,7 +198,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   Predict IQ Fleet Station
                 </span>
                 <span>&bull;</span>
-                <span className="font-mono text-slate-500">Anonymous session</span>
+                <span className="font-mono text-slate-500">
+                  {demoMode ? 'Demo visitor (read-only)' : 'Anonymous session'}
+                </span>
               </div>
             </div>
           </div>
@@ -211,23 +229,27 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <span>Sync Fleet</span>
             </button>
 
-            <button
-              id="btn-dash-add-machine"
-              onClick={onOpenAddMachineModal}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition-all shadow-sm"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Add Asset</span>
-            </button>
+            {!readOnly && (
+              <>
+                <button
+                  id="btn-dash-add-machine"
+                  onClick={onOpenAddMachineModal}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition-all shadow-sm"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Add Asset</span>
+                </button>
 
-            <button
-              id="btn-dash-manual-entry"
-              onClick={() => onOpenManualModal(primaryMachineId)}
-              className="flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
-            >
-              <Plus className="h-3.5 w-3.5 stroke-[3]" />
-              <span>Manual Real Input</span>
-            </button>
+                <button
+                  id="btn-dash-manual-entry"
+                  onClick={() => onOpenManualModal(primaryMachineId)}
+                  className="flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
+                >
+                  <Plus className="h-3.5 w-3.5 stroke-[3]" />
+                  <span>Manual Real Input</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -252,7 +274,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   Real-Time Multi-Sensor Telemetry
                 </h3>
                 {/* Source Badge */}
-                {latestReading?.source === 'REAL_HARDWARE' ? (
+                {latestReading?.source === 'MANUAL_DEMO' ? (
+                  <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    <Info className="h-3 w-3" /> DEMO DATASET (SIMULATED)
+                  </span>
+                ) : latestReading?.source === 'REAL_HARDWARE' ? (
                   <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                     <CheckCircle2 className="h-3 w-3" /> REAL ESP32 HARDWARE
                   </span>
@@ -267,7 +293,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 )}
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Live sensor bus readings for active equipment &middot; Never synthesized or fabricated
+                {demoMode
+                  ? 'Simulated demo readings from the isolated demo dataset — not live hardware telemetry'
+                  : 'Live sensor bus readings for active equipment · Never synthesized or fabricated'}
               </p>
             </div>
           </div>
@@ -501,7 +529,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </div>
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              ESP32 Device Status
+              {demoMode ? 'Data Provenance' : 'ESP32 Device Status'}
             </div>
             <div className={`font-mono text-xs font-bold ${
               deviceConnectionState === 'ONLINE'
@@ -510,7 +538,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 ? 'text-rose-400'
                 : 'text-amber-400'
             }`}>
-              {deviceConnectionState === 'ONLINE' ? 'ONLINE (HEARTBEAT VERIFIED)' : deviceConnectionState === 'OFFLINE' ? 'OFFLINE (STALE)' : 'WAITING FOR HARDWARE'}
+              {deviceConnectionState === 'DEMO'
+                ? 'DEMO DATASET (SIMULATED)'
+                : deviceConnectionState === 'ONLINE'
+                ? 'ONLINE (HEARTBEAT VERIFIED)'
+                : deviceConnectionState === 'OFFLINE'
+                ? 'OFFLINE (STALE)'
+                : 'WAITING FOR HARDWARE'}
             </div>
           </div>
         </div>
@@ -525,7 +559,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               PostgreSQL Telemetry Count
             </div>
             <div className="font-mono text-xs font-bold text-white">
-              {totalReadings.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">verified records</span>
+              {totalReadings.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">{demoMode ? 'demo rows' : 'verified records'}</span>
             </div>
           </div>
         </div>
@@ -750,20 +784,22 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <p className="text-xs text-slate-500 mt-1 max-w-sm">
                 Waiting for real ESP32 sensor telemetry or registered equipment in PostgreSQL.
               </p>
-              <div className="mt-4 flex gap-2">
-                <button
-                  onClick={onOpenAddMachineModal}
-                  className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-                >
-                  Register Asset
-                </button>
-                <button
-                  onClick={() => onOpenManualModal()}
-                  className="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400"
-                >
-                  Manual Real Input
-                </button>
-              </div>
+              {!readOnly && (
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={onOpenAddMachineModal}
+                    className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+                  >
+                    Register Asset
+                  </button>
+                  <button
+                    onClick={() => onOpenManualModal()}
+                    className="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400"
+                  >
+                    Manual Real Input
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

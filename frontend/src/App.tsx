@@ -27,6 +27,8 @@ import SignUpPage from './pages/auth/SignUpPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage';
 import AuthCallbackPage from './pages/auth/AuthCallbackPage';
+import DemoDashboard from './components/DemoDashboard';
+import { isPublicDemoPath } from './lib/demoMode';
 import { buildSignInPath, resolvePostSignInPath } from './lib/authGuard';
 import { isCurrentOrganizationRequest } from './lib/organizationState';
 import { isOrganizationAccessError } from './services/api';
@@ -352,6 +354,11 @@ function MainAppContent() {
           if (dest === 'dashboard') navigateTo('workbench', 'dashboard');
         }}
         onSignIn={() => navigateToPath('/signin')}
+        onExploreDemo={() => {
+          // Full navigation: /demo is outside the authenticated router and must
+          // not mount AuthProvider or initialize a workspace.
+          window.location.assign('/demo');
+        }}
       />
     );
   }
@@ -586,6 +593,14 @@ function MainAppContent() {
 }
 
 export function App() {
+  // PUBLIC_DEMO_MODE: a dedicated public route that never mounts AuthProvider,
+  // never restores a Supabase session and never initializes an organization
+  // workspace. Refreshing /demo re-enters this branch.
+  if (isPublicDemoPath(window.location.pathname)) {
+    return <DemoDashboard />;
+  }
+
+  // NORMAL_MODE: unchanged authenticated application.
   return (
     <AuthProvider>
       <AlarmProvider>

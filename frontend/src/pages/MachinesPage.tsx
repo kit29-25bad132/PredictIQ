@@ -21,6 +21,8 @@ interface MachinesPageProps {
   onSelectMachine: (machineId: string) => void;
   onOpenManualModal: (machineId?: string) => void;
   onOpenAddMachineModal: () => void;
+  /** Public demo: hide machine creation and telemetry injection. */
+  readOnly?: boolean;
 }
 
 export const MachinesPage: React.FC<MachinesPageProps> = ({
@@ -28,6 +30,7 @@ export const MachinesPage: React.FC<MachinesPageProps> = ({
   onSelectMachine,
   onOpenManualModal,
   onOpenAddMachineModal,
+  readOnly = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
@@ -100,14 +103,16 @@ export const MachinesPage: React.FC<MachinesPageProps> = ({
             </button>
           </div>
 
-          <button
-            id="btn-add-machine-top"
-            onClick={onOpenAddMachineModal}
-            className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
-          >
-            <Plus className="h-3.5 w-3.5 stroke-[3]" />
-            <span>Add Equipment</span>
-          </button>
+          {!readOnly && (
+            <button
+              id="btn-add-machine-top"
+              onClick={onOpenAddMachineModal}
+              className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
+            >
+              <Plus className="h-3.5 w-3.5 stroke-[3]" />
+              <span>Add Equipment</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -229,12 +234,14 @@ export const MachinesPage: React.FC<MachinesPageProps> = ({
                           className="flex items-center justify-end gap-2"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <button
-                            onClick={() => onOpenManualModal(m.machine_id)}
-                            className="rounded bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700 hover:text-white"
-                          >
-                            Inject
-                          </button>
+                          {!readOnly && (
+                            <button
+                              onClick={() => onOpenManualModal(m.machine_id)}
+                              className="rounded bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700 hover:text-white"
+                            >
+                              Inject
+                            </button>
+                          )}
                           <button
                             onClick={() => onSelectMachine(m.machine_id)}
                             className="flex items-center gap-1 rounded bg-cyan-500/10 px-2.5 py-1 text-[11px] font-bold text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500 hover:text-slate-950"

@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
 
+    # Public demo API (the only unauthenticated read surface). Rate limiting is
+    # per-process, keyed by client IP; see app/core/rate_limit.py.
+    public_demo_rate_limit_requests: int = 90
+    public_demo_rate_limit_window_seconds: int = 60
+
     # CORS - deliberate origins only. Empty list means "no browser origins allowed".
     cors_origins: Annotated[List[str], NoDecode] = []
 

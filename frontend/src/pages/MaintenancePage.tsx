@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Machine, MaintenanceRecord } from '../types';
 import api from '../services/api';
+import type { FleetDataService } from '../services/dataService';
 import {
   Wrench,
   Plus,
@@ -18,11 +19,17 @@ import {
 interface MaintenancePageProps {
   machines: Machine[];
   onSelectMachine: (id: string) => void;
+  /** Defaults to the authenticated API; the public demo passes `demoApi`. */
+  dataService?: FleetDataService;
+  /** Public demo: hide maintenance creation. */
+  readOnly?: boolean;
 }
 
 export const MaintenancePage: React.FC<MaintenancePageProps> = ({
   machines,
   onSelectMachine,
+  dataService = api,
+  readOnly = false,
 }) => {
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   const [selectedMachineFilter, setSelectedMachineFilter] = useState<string>('ALL');
@@ -40,7 +47,7 @@ export const MaintenancePage: React.FC<MaintenancePageProps> = ({
 
   const fetchRecords = async () => {
     try {
-      const data = await api.getMaintenanceHistory();
+      const data = await dataService.getMaintenanceHistory();
       setRecords(data);
     } catch (err) {
       console.error('Failed to fetch maintenance logs from PostgreSQL:', err);
@@ -97,13 +104,15 @@ export const MaintenancePage: React.FC<MaintenancePageProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => setIsAddModalOpen(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
-        >
-          <Plus className="h-3.5 w-3.5 stroke-[3]" />
-          <span>Log Maintenance Event</span>
-        </button>
+        {!readOnly && (
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
+          >
+            <Plus className="h-3.5 w-3.5 stroke-[3]" />
+            <span>Log Maintenance Event</span>
+          </button>
+        )}
       </div>
 
       {/* Summary Metrics */}

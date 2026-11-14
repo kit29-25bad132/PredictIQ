@@ -35,7 +35,7 @@ from backend.app.db.models import (
     MaintenanceRecord,
     SensorReading,
 )
-from backend.app.api import alerts, machines, maintenance, predictions, sensors, feedback, health, auth, operator, assistant, simulation, user, organizations, demo_sessions
+from backend.app.api import alerts, machines, maintenance, predictions, sensors, feedback, health, auth, operator, assistant, simulation, user, organizations, demo_sessions, public_demo
 from backend.app.db.database import Base, engine
 
 settings = get_settings()
@@ -90,6 +90,9 @@ app.include_router(assistant.router, prefix="/api")
 app.include_router(simulation.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
 app.include_router(demo_sessions.router, prefix="/api")
+# Unauthenticated, read-only, demo-organization-scoped. Mounted separately from
+# every authenticated router; it never shares their dependencies.
+app.include_router(public_demo.router, prefix="/api")
 
 
 def _liveness_db():

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Machine, Alert, FeedbackContext } from '../types';
 import api from '../services/api';
+import type { FleetDataService } from '../services/dataService';
 import {
   AlertTriangle,
   AlertOctagon,
@@ -21,6 +22,10 @@ interface AlertsPageProps {
   onSelectMachine: (id: string) => void;
   onRefreshAlerts?: () => void;
   onRecordFeedback?: (context: FeedbackContext) => void;
+  /** Defaults to the authenticated API; the public demo passes `demoApi`. */
+  dataService?: FleetDataService;
+  /** Public demo: hiding actions is UX only; the backend has no demo writes. */
+  readOnly?: boolean;
 }
 
 export const AlertsPage: React.FC<AlertsPageProps> = ({
@@ -28,6 +33,8 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
   onSelectMachine,
   onRefreshAlerts,
   onRecordFeedback,
+  dataService = api,
+  readOnly = false,
 }) => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
@@ -44,7 +51,7 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
   const fetchAlerts = async () => {
     setIsLoading(true);
     try {
-      const data = await api.getAlerts();
+      const data = await dataService.getAlerts();
       setAlerts(data);
       if (onRefreshAlerts) onRefreshAlerts();
     } catch (err) {
@@ -300,7 +307,8 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
                     </div>
                   </div>
 
-                  {/* Actions */}
+                  {/* Actions (absent for read-only demo visitors) */}
+                  {!readOnly && (
                   <div className="flex items-center gap-2 self-end md:self-center">
                     {onRecordFeedback && (
                       <button
@@ -333,6 +341,7 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
                       </>
                     )}
                   </div>
+                  )}
                 </div>
               </div>
             );

@@ -28,6 +28,14 @@ interface HeaderProps {
   userEmail: string | null;
   /** Supabase sign-out, then redirect to the public landing page. */
   onSignOut: () => void;
+  /** Public demo mode: show demo identity + conversion actions, no account menu. */
+  demoMode?: boolean;
+  /** Leave the demo and return to the landing page. */
+  onExitDemo?: () => void;
+  /** Leave the demo for the normal sign-in flow. */
+  onSignIn?: () => void;
+  /** Read-only visitors never see mutation controls. */
+  readOnly?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -41,6 +49,10 @@ export const Header: React.FC<HeaderProps> = ({
   onRetryBackend,
   userEmail,
   onSignOut,
+  demoMode = false,
+  onExitDemo,
+  onSignIn,
+  readOnly = false,
 }) => {
   const { isAlarmActive, isAudioPlaying, isAudioMuted, muteAlarm, unmuteAlarm } = useAlarm();
 
@@ -155,17 +167,52 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden lg:inline">{autoRefresh ? 'SYNC (4s)' : 'PAUSED'}</span>
         </button>
 
-        {/* Quick Sensor Injection CTA */}
-        <button
-          id="btn-header-inject"
-          onClick={onOpenManualModal}
-          className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
-        >
-          <Plus className="h-3.5 w-3.5 stroke-[3]" />
-          <span className="hidden sm:inline">Manual Input</span>
-          <span className="sm:hidden">Input</span>
-        </button>
+        {/* Quick Sensor Injection CTA (never rendered for read-only visitors) */}
+        {!readOnly && (
+          <button
+            id="btn-header-inject"
+            onClick={onOpenManualModal}
+            className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
+          >
+            <Plus className="h-3.5 w-3.5 stroke-[3]" />
+            <span className="hidden sm:inline">Manual Input</span>
+            <span className="sm:hidden">Input</span>
+          </button>
+        )}
 
+        {demoMode ? (
+          /* Demo identity + conversion actions (no account controls) */
+          <div
+            id="header-demo-menu"
+            className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5"
+            title="Public read-only demo"
+          >
+            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-200">
+              Demo
+            </span>
+            <span className="hidden text-[11px] font-semibold text-amber-100 lg:inline">
+              Read-only visitor
+            </span>
+            <span className="h-3 w-px bg-amber-500/30" />
+            <button
+              id="btn-header-demo-exit"
+              onClick={onExitDemo}
+              className="flex items-center gap-1 text-[11px] font-bold text-amber-100/80 transition-colors hover:text-white"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Exit demo</span>
+            </button>
+            <button
+              id="btn-header-demo-signin"
+              onClick={onSignIn}
+              className="flex items-center gap-1 rounded bg-cyan-500 px-2 py-0.5 text-[11px] font-bold text-slate-950 transition-colors hover:bg-cyan-400"
+            >
+              <UserCircle2 className="h-3.5 w-3.5" />
+              <span>Sign in</span>
+            </button>
+          </div>
+        ) : (
+        <>
         {/* Account Menu & Sign Out */}
         <div
           id="header-account-menu"
@@ -197,6 +244,8 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <LogOut className="h-4 w-4" />
         </button>
+        </>
+        )}
 
         {/* Alerts Bell Notification */}
         <button

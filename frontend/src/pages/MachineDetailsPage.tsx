@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Machine, SensorReading, Prediction, MaintenanceRecord, ContributingFactor } from '../types';
 import ShapAttributionBar from '../components/ShapAttributionBar';
 import api from '../services/api';
+import type { FleetDataService } from '../services/dataService';
 import {
   ResponsiveContainer,
   LineChart,
@@ -41,6 +42,10 @@ interface MachineDetailsPageProps {
   onBackToDashboard: () => void;
   onOpenManualModal: (machineId: string) => void;
   onNavigate3DView?: (machineId: string) => void;
+  /** Defaults to the authenticated API; the public demo passes `demoApi`. */
+  dataService?: FleetDataService;
+  /** Public demo: hide manual telemetry input and label rows as demo data. */
+  readOnly?: boolean;
 }
 
 export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
@@ -50,6 +55,8 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
   onBackToDashboard,
   onOpenManualModal,
   onNavigate3DView,
+  dataService = api,
+  readOnly = false,
 }) => {
   const [machine, setMachine] = useState<Machine | null>(null);
   const [sensorHistory, setSensorHistory] = useState<SensorReading[]>([]);
@@ -61,10 +68,10 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
   const fetchMachineData = async () => {
     try {
       const [m, history, pred, maint] = await Promise.all([
-        api.getMachineDetails(machineId).catch(() => null),
-        api.getSensorData(machineId, 50).catch(() => []),
-        api.getPrediction(machineId).catch(() => null),
-        api.getMaintenanceHistory(machineId).catch(() => []),
+        dataService.getMachineDetails(machineId).catch(() => null),
+        dataService.getSensorData(machineId, 50).catch(() => []),
+        dataService.getPrediction(machineId).catch(() => null),
+        dataService.getMaintenanceHistory(machineId).catch(() => []),
       ]);
 
       if (m) setMachine(m);
@@ -176,13 +183,15 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
             ))}
           </select>
 
-          <button
-            onClick={() => onOpenManualModal(machineId)}
-            className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
-          >
-            <Plus className="h-3.5 w-3.5 stroke-[3]" />
-            <span>Manual Input</span>
-          </button>
+          {!readOnly && (
+            <button
+              onClick={() => onOpenManualModal(machineId)}
+              className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
+            >
+              <Plus className="h-3.5 w-3.5 stroke-[3]" />
+              <span>Manual Input</span>
+            </button>
+          )}
 
           <button
             onClick={fetchMachineData}
@@ -214,7 +223,7 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800 pt-2">
             <span>Status:</span>
             <span className={currentReading ? 'text-emerald-400 font-mono' : 'text-slate-500 font-mono'}>
-              {currentReading ? 'Real Sensor Data' : 'Waiting for Data'}
+              {currentReading ? (readOnly ? 'Demo Dataset' : 'Real Sensor Data') : 'Waiting for Data'}
             </span>
           </div>
         </div>
@@ -238,7 +247,7 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800 pt-2">
             <span>Status:</span>
             <span className={currentReading ? 'text-emerald-400 font-mono' : 'text-slate-500 font-mono'}>
-              {currentReading ? 'Real Sensor Data' : 'Waiting for Data'}
+              {currentReading ? (readOnly ? 'Demo Dataset' : 'Real Sensor Data') : 'Waiting for Data'}
             </span>
           </div>
         </div>
@@ -262,7 +271,7 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800 pt-2">
             <span>Status:</span>
             <span className={currentReading ? 'text-emerald-400 font-mono' : 'text-slate-500 font-mono'}>
-              {currentReading ? 'Real Sensor Data' : 'Waiting for Data'}
+              {currentReading ? (readOnly ? 'Demo Dataset' : 'Real Sensor Data') : 'Waiting for Data'}
             </span>
           </div>
         </div>
@@ -286,7 +295,7 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800 pt-2">
             <span>Status:</span>
             <span className={currentReading ? 'text-emerald-400 font-mono' : 'text-slate-500 font-mono'}>
-              {currentReading ? 'Real Sensor Data' : 'Waiting for Data'}
+              {currentReading ? (readOnly ? 'Demo Dataset' : 'Real Sensor Data') : 'Waiting for Data'}
             </span>
           </div>
         </div>
@@ -394,7 +403,8 @@ export const MachineDetailsPage: React.FC<MachineDetailsPageProps> = ({
               <Database className="h-4 w-4 text-cyan-400" /> PostgreSQL Historical Telemetry Stream
             </h3>
             <p className="text-xs text-slate-400">
-              Showing {chartData.length} genuine readings stored for {machineId}
+              {readOnly ? 'Showing' : 'Showing'} {chartData.length}{' '}
+              {readOnly ? 'demo readings' : 'genuine readings'} stored for {machineId}
             </p>
           </div>
 

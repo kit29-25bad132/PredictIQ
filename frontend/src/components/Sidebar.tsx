@@ -38,6 +38,8 @@ interface SidebarProps {
   isMobileOpen: boolean;
   onCloseMobile: () => void;
   onNavigateHome?: () => void;
+  /** Sections not available in the current mode (public demo hides writes). */
+  hiddenTabs?: NavTab[];
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -49,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen,
   onCloseMobile,
   onNavigateHome,
+  hiddenTabs = [],
 }) => {
   const navItems = [
     {
@@ -122,7 +125,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Settings,
       badge: null,
     },
-  ];
+  ].filter((item) => !hiddenTabs.includes(item.id));
 
   return (
     <>

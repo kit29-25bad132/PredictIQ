@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Machine, Prediction, ContributingFactor, FeedbackContext, ModelEvaluation, ModelStatus } from '../types';
 import ShapAttributionBar from '../components/ShapAttributionBar';
 import api from '../services/api';
+import type { FleetDataService } from '../services/dataService';
 import {
   BrainCircuit,
   Sparkles,
@@ -27,6 +28,12 @@ interface PredictionsPageProps {
   onSelectMachine: (id: string) => void;
   onOpenManualModal: (id: string) => void;
   onRecordFeedback?: (context: FeedbackContext) => void;
+  /** Defaults to the authenticated API; the public demo passes `demoApi`. */
+  dataService?: FleetDataService;
+  /** Public demo: hide the measurement injection panel and feedback capture. */
+  readOnly?: boolean;
+  /** Demo labels/provenance only. */
+  demoMode?: boolean;
 }
 
 export const PredictionsPage: React.FC<PredictionsPageProps> = ({
@@ -34,6 +41,9 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
   onSelectMachine,
   onOpenManualModal,
   onRecordFeedback,
+  dataService = api,
+  readOnly = false,
+  demoMode = false,
 }) => {
   const [selectedMachineId, setSelectedMachineId] = useState<string>(
     machines.length > 0 ? machines[0].machine_id : 'M001'
@@ -56,10 +66,16 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
   const fetchStatusAndPrediction = async (id: string) => {
     setIsLoading(true);
     try {
+      // Model evaluation is an operator-only, cross-organization report; the
+      // demo service deliberately does not expose it and never fabricates one.
+      const evaluationPromise = dataService.getModelEvaluation
+        ? dataService.getModelEvaluation().catch(() => null)
+        : Promise.resolve(null);
+
       const [predRes, statusRes, evalRes] = await Promise.all([
-        api.getPrediction(id).catch(() => null),
-        api.getModelStatus().catch(() => null),
-        api.getModelEvaluation().catch(() => null),
+        dataService.getPrediction(id).catch(() => null),
+        dataService.getModelStatus().catch(() => null),
+        evaluationPromise,
       ]);
       setActivePrediction(predRes);
       setModelStatus(statusRes);
@@ -117,7 +133,9 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
               AI Predictive Engine & Machine Learning Status
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Real-Data Architecture • PostgreSQL Telemetry Integration • Transparent Model Readiness
+              {demoMode
+                ? 'Demo Dataset • PostgreSQL-backed Demo Records • Transparent Prototype Model Readiness'
+                : 'Real-Data Architecture • PostgreSQL Telemetry Integration • Transparent Model Readiness'}
             </p>
           </div>
         </div>
@@ -147,8 +165,8 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
 
       {/* Main 2-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Real Manual Sensor Measurement Injector */}
-        <div className="lg:col-span-5 space-y-4">
+        {/* Left Column: measurement injector (authenticated write surface only) */}
+        <div className={readOnly ? 'hidden' : 'lg:col-span-5 space-y-4'}>
           <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
@@ -257,7 +275,7 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
         </div>
 
         {/* Right Column: AI Readiness & Model Status */}
-        <div className="lg:col-span-7 space-y-4">
+        <div className={readOnly ? 'lg:col-span-12 space-y-4' : 'lg:col-span-7 space-y-4'}>
           <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 shadow-xl">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
