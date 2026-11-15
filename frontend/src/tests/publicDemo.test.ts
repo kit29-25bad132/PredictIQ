@@ -171,7 +171,7 @@ console.log('\n-- Demo API transport --');
   await withMockedFetch(
     () => ({
       status: 200,
-      body: { mode: 'PUBLIC_DEMO', dataset: { notice: 'simulated' }, stats: {}, generated_at: '' },
+      body: { mode: 'PUBLIC_DEMO', dataset: { notice: 'historical' }, stats: {}, generated_at: '' },
     }),
     async (recorded) => {
       await demoApi.getOverview();

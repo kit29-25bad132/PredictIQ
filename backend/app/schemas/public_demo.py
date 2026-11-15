@@ -48,6 +48,21 @@ class DemoOverviewResponse(BaseModel):
     generated_at: datetime
 
 
+class DemoSnapshotResponse(BaseModel):
+    """Single read-only snapshot served at ``GET /api/public/demo``.
+
+    Keys are the public demo contract. ``predictions`` and
+    ``maintenance_records`` are present even when the dataset has no rows so a
+    client never has to distinguish "missing endpoint" from "empty section".
+    """
+
+    machines: List[MachineResponse] = Field(default_factory=list)
+    sensor_readings: List[SensorReadingResponse] = Field(default_factory=list)
+    alerts: List[AlertResponse] = Field(default_factory=list)
+    predictions: List[PredictionResponse] = Field(default_factory=list)
+    maintenance_records: List[MaintenanceResponse] = Field(default_factory=list)
+
+
 class DemoMachineListResponse(BaseModel):
     items: List[MachineResponse] = Field(default_factory=list)
     total: int = 0

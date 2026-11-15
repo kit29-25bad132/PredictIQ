@@ -40,9 +40,14 @@ const DEMO_REFRESH_INTERVAL_MS = 15000;
 interface DemoWorkbenchProps {
   onExit: () => void;
   onSignIn: () => void;
+  onSignUp: () => void;
 }
 
-const DemoWorkbench: React.FC<DemoWorkbenchProps> = ({ onExit, onSignIn }) => {
+const DemoWorkbench: React.FC<DemoWorkbenchProps> = ({
+  onExit,
+  onSignIn,
+  onSignUp,
+}) => {
   const {
     status,
     error,
@@ -209,7 +214,7 @@ const DemoWorkbench: React.FC<DemoWorkbenchProps> = ({ onExit, onSignIn }) => {
         {/* Persistent demo identity + dataset disclosure + conversion actions */}
         <DemoModeBanner
           dataset={overview?.dataset ?? null}
-          onSignIn={onSignIn}
+          onSignUp={onSignUp}
           onExit={onExit}
         />
 
@@ -311,6 +316,7 @@ const DemoWorkbench: React.FC<DemoWorkbenchProps> = ({ onExit, onSignIn }) => {
 interface DemoDashboardProps {
   onExit?: () => void;
   onSignIn?: () => void;
+  onSignUp?: () => void;
 }
 
 /**
@@ -321,10 +327,15 @@ interface DemoDashboardProps {
 export const DemoDashboard: React.FC<DemoDashboardProps> = ({
   onExit = () => window.location.assign('/'),
   onSignIn = () => window.location.assign('/signin'),
+  onSignUp = () => window.location.assign('/signup'),
 }) => (
   <DemoProvider>
     <AlarmProvider backendSync={false}>
-      <DemoWorkbench onExit={onExit} onSignIn={onSignIn} />
+      <DemoWorkbench
+        onExit={onExit}
+        onSignIn={onSignIn}
+        onSignUp={onSignUp}
+      />
     </AlarmProvider>
   </DemoProvider>
 );

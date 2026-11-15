@@ -106,9 +106,10 @@ Downgrade **refuses** while demo data exists (any `demo_sessions` row or
 1. reset/purge demo sessions with explicit approval, or
 2. restore a verified `pg_dump`/PITR backup.
 
-`deploy/entrypoint.sh` runs `alembic upgrade head` automatically, so applying
-this migration in production is a deployment-time schema change requiring
-explicit approval. This repository's Phase 1 work does not migrate any
+Schema changes are explicit operator actions. `deploy/entrypoint.sh` no longer
+runs Alembic, and the application no longer calls `create_all`; apply migration
+010 with `deploy/migrate.sh` (or `alembic upgrade head`) against an explicitly
+configured database after approval. This repository's work does not migrate any
 production database.
 
 ## Testing

@@ -3,9 +3,9 @@
 Contract
 --------
 ``GET /api/public/demo/*`` is the only unauthenticated data surface. It exists
-so the landing page's "Explore Demo" experience can read a dedicated simulated
-dataset without creating a Supabase session, a fake membership, or any write
-path.
+so the landing page's "Explore Demo" experience can read a dedicated historical
+dataset copied from production without creating a Supabase session, a fake
+membership, or any write path.
 
 Security model
 --------------
@@ -28,7 +28,7 @@ a verified Supabase user and an active organization membership.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -67,6 +67,7 @@ from backend.app.schemas.public_demo import (
     DemoOverviewResponse,
     DemoPredictionListResponse,
     DemoReadingListResponse,
+    DemoSnapshotResponse,
 )
 from backend.app.schemas.sensor import (
     AlertResponse,
@@ -127,6 +128,11 @@ router = APIRouter(
 
 LIMIT_QUERY = Query(default=50, ge=1, le=200, description="Page size (max 200)")
 OFFSET_QUERY = Query(default=0, ge=0, le=5000, description="Rows to skip")
+
+# Snapshot bounds: never dump an unbounded demo history.
+SNAPSHOT_READINGS_PER_MACHINE = 50
+SNAPSHOT_WINDOW_HOURS = 24
+SNAPSHOT_SECTION_LIMIT = 50
 
 
 def _unavailable() -> HTTPException:
@@ -214,6 +220,113 @@ def _demo_machine_count(db: Session, org: Organization) -> int:
         .filter(Machine.organization_id == org.id, Machine.is_demo.is_(True))
         .scalar()
         or 0
+    )
+
+
+def _snapshot_window_start(db: Session, org: Organization) -> Optional[datetime]:
+    """Start of the 24-hour window ending at the newest demo reading.
+
+    Anchoring on the newest demo row (instead of wall-clock now) keeps a demo
+    snapshot useful even when the isolated dataset is historical, while still
+    bounding what one unauthenticated request can read.
+    """
+    newest = (
+        db.query(func.max(SensorReading.timestamp))
+        .filter(
+            SensorReading.organization_id == org.id,
+            SensorReading.source == PUBLIC_DEMO_PROVENANCE,
+        )
+        .scalar()
+    )
+    return newest - timedelta(hours=SNAPSHOT_WINDOW_HOURS) if newest else None
+
+
+# ============================================================================
+# Combined snapshot
+# ============================================================================
+@router.get(
+    "",
+    response_model=DemoSnapshotResponse,
+    summary="Read-only demo snapshot (no authentication)",
+)
+def get_demo_snapshot(db: Session = Depends(get_db)) -> DemoSnapshotResponse:
+    """One fixed-shape, read-only snapshot for the public dashboard.
+
+    This is additive to the section endpoints below. It applies the same demo
+    scope, provenance and projection rules: no organization identifier is read
+    from the caller, no write path exists, and only demo rows are returned.
+    """
+    try:
+        org = _demo_organization(db)
+        window_start = _snapshot_window_start(db, org)
+
+        machines = (
+            db.query(Machine)
+            .filter(
+                Machine.organization_id == org.id,
+                Machine.is_demo.is_(True),
+            )
+            .order_by(Machine.machine_id.asc())
+            .all()
+        )
+
+        readings: List[SensorReading] = []
+        if window_start is not None:
+            for machine in machines:
+                rows = (
+                    db.query(SensorReading)
+                    .filter(
+                        SensorReading.organization_id == org.id,
+                        SensorReading.machine_id == machine.machine_id,
+                        SensorReading.source == PUBLIC_DEMO_PROVENANCE,
+                        SensorReading.timestamp >= window_start,
+                    )
+                    .order_by(desc(SensorReading.timestamp), desc(SensorReading.id))
+                    .limit(SNAPSHOT_READINGS_PER_MACHINE)
+                    .all()
+                )
+                readings.extend(reversed(rows))
+        readings.sort(key=lambda reading: (reading.timestamp, reading.id))
+
+        alerts = (
+            db.query(Alert)
+            .filter(Alert.organization_id == org.id)
+            .order_by(desc(Alert.created_at), desc(Alert.id))
+            .limit(SNAPSHOT_SECTION_LIMIT)
+            .all()
+        )
+        predictions = (
+            db.query(Prediction)
+            .filter(Prediction.organization_id == org.id)
+            .order_by(desc(Prediction.timestamp), desc(Prediction.id))
+            .limit(SNAPSHOT_SECTION_LIMIT)
+            .all()
+        )
+        maintenance = (
+            db.query(MaintenanceRecord)
+            .filter(MaintenanceRecord.organization_id == org.id)
+            .order_by(
+                desc(MaintenanceRecord.maintenance_date),
+                desc(MaintenanceRecord.id),
+            )
+            .limit(SNAPSHOT_SECTION_LIMIT)
+            .all()
+        )
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        raise _unavailable()
+
+    return DemoSnapshotResponse(
+        machines=[_machine_payload(db, org, machine) for machine in machines],
+        sensor_readings=[
+            SensorReadingResponse.model_validate(reading) for reading in readings
+        ],
+        alerts=[AlertResponse.model_validate(alert) for alert in alerts],
+        predictions=[response_from_prediction(prediction) for prediction in predictions],
+        maintenance_records=[
+            MaintenanceResponse.model_validate(record) for record in maintenance
+        ],
     )
 
 

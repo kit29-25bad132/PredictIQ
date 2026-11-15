@@ -32,14 +32,14 @@ PUBLIC_DEMO_ORGANIZATION_ID = uuid.UUID("00000000-0000-4000-8000-0000000000de")
 PUBLIC_DEMO_ORGANIZATION_SLUG = "public-demo"
 PUBLIC_DEMO_ORGANIZATION_NAME = "PredictIQ Public Demo"
 
-PUBLIC_DEMO_DATASET_LABEL = "Public Demo Fleet (simulated dataset)"
+PUBLIC_DEMO_DATASET_LABEL = "Public Demo Fleet (historical production data)"
 PUBLIC_DEMO_PROVENANCE = "MANUAL_DEMO"
 
 PUBLIC_DEMO_NOTICE = (
     "This is a read-only demonstration dataset. Machines, readings, predictions, "
-    "alerts, and maintenance records are simulated demo records stored in the "
-    "PredictIQ PostgreSQL schema - they are not live machine telemetry and do "
-    "not belong to any customer organization."
+    "alerts, and maintenance records are historical records copied from a "
+    "production dataset into an isolated demo organization. Direct identifiers, "
+    "devices, credentials and personal data are removed, and no record is live."
 )
 
 # Query parameters that would allow a caller to try to choose another tenant.

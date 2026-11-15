@@ -7,9 +7,9 @@ This directory holds the complete deployment configuration for the PredictIQ V1 
 | Component | Status |
 |-----------|--------|
 | Dockerfile (frontend) | Implemented — builds React/Vite frontend + Node server |
-| Dockerfile.backend | Implemented — builds FastAPI backend with migrations |
+| Dockerfile.backend | Implemented — builds FastAPI backend; migrations are explicit |
 | docker-compose.yml | Implemented — complete stack: frontend + backend + database |
-| Backend service | Real FastAPI image with Alembic migrations |
+| Backend service | Real FastAPI image; Alembic migrations run separately |
 | Database service | PostgreSQL 16 with persistent volume |
 | Healthchecks | Backend `/api/ready`, frontend node fetch, database `pg_isready`, nginx `/nginx-health` |
 | Environment template | `deploy/.env.example` with all required variables |
@@ -36,7 +36,7 @@ This directory holds the complete deployment configuration for the PredictIQ V1 
 │  ┌────────────────────────┴─────────────────────────────┐  │
 │  │                    Backend Service                    │  │
 │  │  FastAPI on port 8000                                │  │
-│  │  - Migrations run on startup (Alembic)               │  │
+│  │  - Migrations are explicit (deploy/migrate.sh)        │  │
 │  │  - Health: /api/health (alive)                       │  │
 │  │  - Ready:  /api/ready (DB check)                     │  │
 │  └────────────────────────┬─────────────────────────────┘  │
@@ -54,7 +54,8 @@ This directory holds the complete deployment configuration for the PredictIQ V1 
 - `Dockerfile` — builds the React/Vite frontend + server.ts into a Node image
 - `Dockerfile.backend` — builds the FastAPI backend with Python dependencies
 - `docker-compose.yml` — orchestrates all three services with healthchecks
-- `entrypoint.sh` — backend startup script that runs migrations before FastAPI
+- `entrypoint.sh` — backend startup script; does not run migrations
+- `migrate.sh` - explicit, operator-run Alembic migration helper
 - `.env.example` — environment variable templates (no real values)
 - `TLS_SETUP.md` — TLS configuration guide for production deployment
 - `README.md` — this file
@@ -117,39 +118,37 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 
 ## Database Migration Strategy
 
-### Approach: Pre-startup Migration
+### Approach: Explicit, Operator-Run Migration
 
-The backend container runs database migrations **before** starting the FastAPI application.
+The backend container does **not** run migrations at startup. `entrypoint.sh`
+only performs environment safety checks and starts FastAPI. The application also
+never calls `Base.metadata.create_all`; startup must not mutate the schema.
 
 **How it works:**
 
-1. Container starts → `entrypoint.sh` executes
-2. `alembic upgrade head` runs to apply any pending migrations (alembic.ini and
-   alembic/ are copied to /app by the Dockerfile — the entrypoint verifies this)
-3. If migrations succeed → FastAPI starts (`backend.app.main:app`)
-4. If migrations fail → container exits with error
+1. Set `DATABASE_URL` to the intended database.
+2. Run `deploy/migrate.sh` (or `alembic upgrade head`) manually after approval.
+3. Deploy/start the backend only after the required revision is present.
+
+The script prints `alembic current`, upgrades to head, and prints `alembic
+current` again. It never prints the connection string and never seeds data.
 
 **Migration Chain:**
 
 ```
-001_initial_schema → 002_device_source → 003_timestamptz_and_machine_specs
-→ 004_enum_check_constraints → 005_prediction_prototype_fields
-→ 006_feedback_ground_truth
+001_initial_schema -> 002_device_source -> 003_timestamptz_and_machine_specs
+-> 004_enum_check_constraints -> 005_prediction_prototype_fields
+-> 006_feedback_ground_truth -> ... -> 010_manual_demo_source
 ```
 
 **Important Notes:**
 
-- Do NOT modify existing migrations (001-006)
-- The migration chain is designed to be applied incrementally
-- New migrations should be added with `alembic revision --autogenerate`
-- The database volume persists data across container restarts
-
-**Why this approach:**
-
-- Ensures database schema is always up-to-date before the app starts
-- Fails fast if migrations have issues (container won't start)
-- No need to modify application startup code
-- Alembic handles the migration order automatically
+- Do NOT modify existing migrations.
+- The migration chain is designed to be applied incrementally.
+- New migrations should be added with `alembic revision --autogenerate`.
+- The database volume persists data across container restarts.
+- Migration 010 is required before public-demo provisioning; it is not applied
+  automatically.
 
 ## Health and Readiness
 
@@ -169,7 +168,7 @@ healthcheck:
   test: ["CMD", "python", "-c", "urllib.request.urlopen('http://localhost:8000/api/ready')"]
   interval: 30s
   timeout: 10s
-  start_period: 40s  # Time for migrations to complete
+  start_period: 40s  # Startup grace period
   retries: 3
 ```
 
@@ -226,7 +225,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml build
 # Start services in background
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 
-# Wait for services to be healthy (migrations take ~10-30 seconds)
+# Wait for services to be healthy
 sleep 30
 
 # Verify all services are running
@@ -340,8 +339,11 @@ docker compose -f deploy/docker-compose.yml logs -f database
 # Follow logs in real-time
 docker compose -f deploy/docker-compose.yml logs -f --tail=100
 
-# Check backend migration output
-docker compose -f deploy/docker-compose.yml logs backend | grep -i migration
+# Check backend startup output
+docker compose -f deploy/docker-compose.yml logs backend
+
+# Check the applied schema revision explicitly
+docker compose -f deploy/docker-compose.yml exec backend alembic current
 ```
 
 ## Frontend ↔ Backend Connection
@@ -720,11 +722,11 @@ If hardware is not available, this scenario is documented but not executable.
 | Item | Status | Notes |
 |------|--------|-------|
 | Backend Dockerfile syntax | ✅ Verified | Build context correct, no syntax errors |
-| Backend entrypoint script | ✅ Verified | Runs migrations, then starts app |
+| Backend entrypoint script | ✅ Verified | Checks env, starts app, never writes schema |
 | Frontend Dockerfile | ✅ Existing | From Phase 7, unchanged |
 | docker-compose.yml syntax | ⏳ Config validation | Run `docker compose config` to verify |
 | Health endpoints | ✅ Code verified | `/api/health`, `/api/ready`, `/api/health/detailed` implemented |
-| Database migration chain | ✅ Code verified | 001→006 chain intact, entrypoint runs `alembic upgrade head` |
+| Database migration chain | ✅ Code verified | 001→006 chain intact; `deploy/migrate.sh` runs `alembic upgrade head` explicitly |
 | Environment templates | ✅ Created | `deploy/.env.example` with all variables |
 | Frontend API configuration | ✅ Existing | Uses `VITE_API_URL`, no hardcoded URLs |
 
@@ -825,12 +827,12 @@ docker compose -f deploy/docker-compose.yml up -d
 ### Backend won't start
 
 ```bash
-# Check logs for migration errors
+# Check logs for startup errors (migrations are not run here)
 docker compose -f deploy/docker-compose.yml logs backend
 
 # Common issues:
 # - DATABASE_URL incorrect or database not reachable
-# - Migration failure (check alembic output)
+# - Missing schema revision (run deploy/migrate.sh explicitly)
 # - Port conflict (8000 already in use)
 ```
 
@@ -858,12 +860,12 @@ docker compose -f deploy/docker-compose.yml logs database
 # Verify credentials in .env match database service environment
 ```
 
-### Migrations not applying
+### Migrations not applied
 
 ```bash
 # Check migration history
 docker compose -f deploy/docker-compose.yml exec backend alembic current
 
-# Run migrations manually to see errors
-docker compose -f deploy/docker-compose.yml exec backend alembic upgrade head
+# Apply migrations explicitly to see errors
+docker compose -f deploy/docker-compose.yml exec backend /migrate.sh
 ```

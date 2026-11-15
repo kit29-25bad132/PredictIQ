@@ -134,7 +134,7 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               {demoMode
-                ? 'Demo Dataset • PostgreSQL-backed Demo Records • Transparent Prototype Model Readiness'
+                ? 'Demo Dataset • Historical PostgreSQL Records • Transparent Prototype Model Readiness'
                 : 'Real-Data Architecture • PostgreSQL Telemetry Integration • Transparent Model Readiness'}
             </p>
           </div>

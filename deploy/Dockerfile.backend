@@ -1,7 +1,8 @@
 # PredictIQ Backend Deployment (Phase 8)
 #
-# Builds the FastAPI backend with all Python dependencies and runs migrations
-# before starting the application. No secrets are baked into this image.
+# Builds the FastAPI backend with all Python dependencies. Schema migrations are
+# an explicit operator step (deploy/migrate.sh), not a container startup action.
+# No secrets are baked into this image.
 #
 # Service: backend
 # Port: 8000
@@ -50,9 +51,10 @@ RUN if [ "$VERIFY_MIGRATIONS" = "true" ]; then \
         python -c "import alembic, sqlalchemy, fastapi; print('migration toolchain OK')"; \
     fi
 
-# Make the entrypoint executable
+# Make the entrypoint and explicit migration helper executable
 COPY deploy/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY deploy/migrate.sh /migrate.sh
+RUN chmod +x /entrypoint.sh /migrate.sh
 
 # Expose the FastAPI port
 EXPOSE 8000
@@ -71,6 +73,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # this catches regressions like a missing package __init__ or wrong module path.
 RUN python -c "import backend.app.main; print('backend.app.main:app importable from /app')"
 
-# Run migrations then start the application
+# Start the application; migrations are run separately via /migrate.sh
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["sh", "-c", "uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

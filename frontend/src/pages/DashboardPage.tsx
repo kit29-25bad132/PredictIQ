@@ -276,7 +276,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 {/* Source Badge */}
                 {latestReading?.source === 'MANUAL_DEMO' ? (
                   <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    <Info className="h-3 w-3" /> DEMO DATASET (SIMULATED)
+                    <Info className="h-3 w-3" /> DEMO DATASET (HISTORICAL)
                   </span>
                 ) : latestReading?.source === 'REAL_HARDWARE' ? (
                   <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
@@ -294,7 +294,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
                 {demoMode
-                  ? 'Simulated demo readings from the isolated demo dataset — not live hardware telemetry'
+                  ? 'Historical readings copied into the isolated demo dataset — not live hardware telemetry'
                   : 'Live sensor bus readings for active equipment · Never synthesized or fabricated'}
               </p>
             </div>
@@ -539,7 +539,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 : 'text-amber-400'
             }`}>
               {deviceConnectionState === 'DEMO'
-                ? 'DEMO DATASET (SIMULATED)'
+                ? 'DEMO DATASET (HISTORICAL)'
                 : deviceConnectionState === 'ONLINE'
                 ? 'ONLINE (HEARTBEAT VERIFIED)'
                 : deviceConnectionState === 'OFFLINE'

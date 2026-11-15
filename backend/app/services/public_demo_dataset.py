@@ -1,32 +1,36 @@
-"""Public demo dataset provisioning (dedicated, isolated, simulated).
+"""Provision the public demo from an explicitly selected production organization.
 
-Everything here is written into ONE dedicated demo organization
-(``PUBLIC_DEMO_ORGANIZATION_ID`` / slug ``public-demo``) using the existing
-schema and domain relationships:
+The public demo is still one isolated organization (``PUBLIC_DEMO_ORGANIZATION_ID``
+/ slug ``public-demo``) using the existing schema. It does not generate or
+randomize telemetry. Instead it copies selected machines and their historical
+records from a source organization that the operator names explicitly.
 
-* ``machines.is_demo = True`` - excluded from authenticated fleet reads, device
-  ingestion, heartbeats, feedback and model evaluation by the existing code;
-* one ACTIVE ``demo_sessions`` row per demo machine - required by the
-  ``MANUAL_DEMO`` provenance check constraint;
-* ``sensor_readings`` rows with ``source='MANUAL_DEMO'``, ``device_id=NULL`` and
-  ``demo_session_id`` set - the database constraint makes it impossible to
-  present them as WOKWI or REAL_HARDWARE telemetry;
-* ``predictions`` / ``alerts`` stamped with the same ``demo_session_id``;
-* ``maintenance_records`` with role-based technician labels (no personal data).
-
-The generator is deterministic (seeded per machine). The seeder is idempotent:
-running it twice is a no-op unless ``reset=True``, and reset deletes only rows
-owned by the demo organization. It refuses to run if a demo machine ID is
-already owned by a different organization, so it can never overwrite a
-production asset.
+Copy rules
+----------
+* Only the selected source machines are copied. The source organization is never
+  modified.
+* New primary keys are assigned. The source machine id is replaced with a
+  deterministic public id, so original asset ids are not exposed.
+* Every copied reading is written as ``source='MANUAL_DEMO'``,
+  ``device_id=NULL`` and with a demo-session id. The database constraint therefore
+  prevents a demo row from impersonating a real device. Values and timestamps are
+  copied unchanged.
+* Devices, memberships, user ids, feedback and source organization ids are not
+  copied. Maintenance technician names are replaced with a non-personal label.
+* Locations are redacted by default. Names, types, status, specifications and
+  historical free-text records are copied only for the selected machines.
+* One deterministic ACTIVE demo session is created per copied machine.
+* Re-running without ``refresh`` is a no-op when the demo dataset already exists.
+  Re-running with ``refresh`` deletes only demo-organization rows and rebuilds
+  them atomically, so repeated provisioning cannot duplicate rows.
 """
 
 from __future__ import annotations
 
-import math
-import random
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+import hashlib
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy import delete, func
 from sqlalchemy.orm import Session
@@ -40,6 +44,7 @@ from backend.app.core.public_demo import (
 from backend.app.db.models import (
     Alert,
     DemoSession,
+    Device,
     FeedbackRecord,
     Machine,
     MaintenanceRecord,
@@ -48,408 +53,266 @@ from backend.app.db.models import (
     SensorReading,
 )
 
-READING_COUNT = 48
-READING_INTERVAL_MINUTES = 5
-
-# Deterministic demo fleet. Values are inside the physical envelope enforced by
-# the telemetry schema, and each machine tells a different condition story.
-MACHINE_BLUEPRINTS: List[Dict[str, Any]] = [
-    {
-        "machine_id": "DM-001",
-        "name": "Feedwater Pump P-101",
-        "type": "Centrifugal Pump",
-        "location": "Demo Plant / Utilities Bay 1",
-        "status": "Healthy",
-        "seed": 101,
-        "specifications": {
-            "rated_rpm": 1480.0,
-            "rated_current": 22.0,
-            "max_temp": 85.0,
-            "max_vibration": 4.5,
-        },
-        "temperature": (42.0, 47.0),
-        "temperature_wobble": 0.9,
-        "vibration": (1.6, 2.1),
-        "vibration_wobble": 0.12,
-        "current": (11.0, 12.2),
-        "current_wobble": 0.25,
-        "rpm": (1478.0, 1472.0),
-        "rpm_wobble": 3.0,
-        "prediction": {
-            "failure_probability": 0.18,
-            "component": "Bearing",
-            "remaining_life_days": 96,
-            "confidence": 0.72,
-            "explanation": "Vibration and thermal channels are within the rated operating envelope; "
-            "a slow bearing wear trend remains the dominant, low-confidence risk signal.",
-            "recommended_action": "Continue routine vibration monitoring; inspect drive-end bearing "
-            "grease at the next planned service window.",
-            "feature_importance": {
-                "temperature": 0.22,
-                "vibration": 0.34,
-                "current": 0.18,
-                "rpm": 0.26,
-            },
-        },
-        "alerts": [
-            {
-                "alert_type": "bearing_inspection",
-                "severity": "Info",
-                "message": "Routine drive-end bearing inspection completed during planned service.",
-                "status": "RESOLVED",
-                "minutes_ago": 2880,
-                "resolved_minutes_ago": 2760,
-            },
-        ],
-        "maintenance": [
-            {
-                "component": "Bearing",
-                "failure_type": "Preventive wear inspection",
-                "issue_description": "Scheduled grease replenishment on drive-end bearing.",
-                "maintenance_action": "Repacked drive-end bearing with high-temperature grease and "
-                "verified shaft alignment.",
-                "technician": "Demo Technician A",
-                "status": "Completed",
-                "maintenance_days_ago": 6,
-            },
-        ],
-    },
-    {
-        "machine_id": "DM-002",
-        "name": "Induction Motor M-204",
-        "type": "Induction Motor",
-        "location": "Demo Plant / Line 2 Drive Train",
-        "status": "Warning",
-        "seed": 202,
-        "specifications": {
-            "rated_rpm": 1450.0,
-            "rated_current": 38.0,
-            "max_temp": 90.0,
-            "max_vibration": 4.5,
-        },
-        "temperature": (72.0, 84.0),
-        "temperature_wobble": 1.3,
-        "vibration": (4.1, 5.2),
-        "vibration_wobble": 0.22,
-        "current": (27.0, 31.0),
-        "current_wobble": 0.6,
-        "rpm": (1446.0, 1442.0),
-        "rpm_wobble": 4.0,
-        "prediction": {
-            "failure_probability": 0.63,
-            "component": "Stator Winding",
-            "remaining_life_days": 34,
-            "confidence": 0.78,
-            "explanation": "Stator winding temperature is trending above the rated thermal class while "
-            "phase current remains inside nameplate limits, consistent with developing insulation "
-            "degradation or a blocked cooling path.",
-            "recommended_action": "Inspect motor cooling airflow and stator insulation resistance at "
-            "the next shift; schedule a winding thermography survey this week.",
-            "feature_importance": {
-                "temperature": 0.46,
-                "vibration": 0.16,
-                "current": 0.24,
-                "rpm": 0.14,
-            },
-        },
-        "alerts": [
-            {
-                "alert_type": "stator_overheat",
-                "severity": "Critical",
-                "message": "Stator winding temperature exceeded the rated thermal limit.",
-                "status": "ACTIVE",
-                "minutes_ago": 18,
-            },
-            {
-                "alert_type": "vibration_elevated",
-                "severity": "Warning",
-                "message": "Vibration velocity is trending above the warning band at the drive end.",
-                "status": "ACKNOWLEDGED",
-                "minutes_ago": 240,
-            },
-        ],
-        "maintenance": [
-            {
-                "component": "Stator Winding",
-                "failure_type": "Insulation degradation (suspected)",
-                "issue_description": "Elevated stator temperature under steady 60% load.",
-                "maintenance_action": "Cleaned motor cooling ducts and scheduled insulation resistance test.",
-                "technician": "Demo Technician B",
-                "status": "Scheduled",
-                "maintenance_days_ago": -2,
-            },
-            {
-                "component": "Shaft / Coupling",
-                "failure_type": "Coupling misalignment",
-                "issue_description": "Axial vibration harmonics observed during acceleration.",
-                "maintenance_action": "Re-shimmed motor feet and laser-aligned the coupling.",
-                "technician": "Demo Technician A",
-                "status": "Completed",
-                "maintenance_days_ago": 21,
-            },
-        ],
-    },
-    {
-        "machine_id": "DM-003",
-        "name": "CNC Spindle S-310",
-        "type": "CNC Spindle",
-        "location": "Demo Plant / Machining Cell 3",
-        "status": "Critical",
-        "seed": 303,
-        "specifications": {
-            "rated_rpm": 12000.0,
-            "rated_current": 12.0,
-            "max_temp": 70.0,
-            "max_vibration": 2.8,
-        },
-        "temperature": (78.0, 92.0),
-        "temperature_wobble": 1.8,
-        "vibration": (6.4, 7.9),
-        "vibration_wobble": 0.35,
-        "current": (13.0, 15.0),
-        "current_wobble": 0.4,
-        "rpm": (11920.0, 11810.0),
-        "rpm_wobble": 25.0,
-        "prediction": {
-            "failure_probability": 0.87,
-            "component": "Spindle Bearing",
-            "remaining_life_days": 9,
-            "confidence": 0.83,
-            "explanation": "High-frequency vibration and rising spindle temperature together indicate "
-            "advanced bearing degradation; speed droop under load is consistent with increasing friction.",
-            "recommended_action": "Plan an immediate spindle bearing replacement and avoid high-load "
-            "finishing operations until the spindle is serviced.",
-            "feature_importance": {
-                "temperature": 0.28,
-                "vibration": 0.52,
-                "current": 0.12,
-                "rpm": 0.08,
-            },
-        },
-        "alerts": [
-            {
-                "alert_type": "vibration_critical",
-                "severity": "Critical",
-                "message": "Spindle vibration 7.9 mm/s RMS exceeded the critical limit of 2.8 mm/s.",
-                "status": "ACTIVE",
-                "minutes_ago": 7,
-            },
-            {
-                "alert_type": "thermal_drift",
-                "severity": "Warning",
-                "message": "Spindle temperature is rising faster than the normal warm-up profile.",
-                "status": "ACTIVE",
-                "minutes_ago": 55,
-            },
-        ],
-        "maintenance": [
-            {
-                "component": "Spindle Bearing",
-                "failure_type": "Bearing spalling (suspected)",
-                "issue_description": "Progressive high-frequency vibration with thermal rise.",
-                "maintenance_action": "Ordered matched spindle bearing set; machining limited to low-load "
-                "operations pending teardown.",
-                "technician": "Demo Technician C",
-                "status": "In Progress",
-                "maintenance_days_ago": 1,
-                "failure_days_ago": 3,
-            },
-        ],
-    },
-    {
-        "machine_id": "DM-004",
-        "name": "Screw Compressor C-402",
-        "type": "Screw Compressor",
-        "location": "Demo Plant / Compressor Room",
-        "status": "Maintenance",
-        "seed": 404,
-        "specifications": {
-            "rated_rpm": 3000.0,
-            "rated_current": 45.0,
-            "max_temp": 95.0,
-            "max_vibration": 5.0,
-        },
-        "temperature": (88.0, 95.0),
-        "temperature_wobble": 1.6,
-        "vibration": (3.2, 3.6),
-        "vibration_wobble": 0.18,
-        "current": (41.0, 44.0),
-        "current_wobble": 0.7,
-        "rpm": (2988.0, 2962.0),
-        "rpm_wobble": 6.0,
-        "prediction": {
-            "failure_probability": 0.52,
-            "component": "Cooling System",
-            "remaining_life_days": 48,
-            "confidence": 0.69,
-            "explanation": "Discharge temperature is elevated while vibration and current remain "
-            "moderate, pointing at heat-exchanger fouling rather than a mechanical fault.",
-            "recommended_action": "Clean the aftercooler and verify cooling-water flow before returning "
-            "the compressor to full duty.",
-            "feature_importance": {
-                "temperature": 0.55,
-                "vibration": 0.15,
-                "current": 0.2,
-                "rpm": 0.1,
-            },
-        },
-        "alerts": [
-            {
-                "alert_type": "discharge_temperature",
-                "severity": "Warning",
-                "message": "Discharge temperature is above the normal operating band.",
-                "status": "ACTIVE",
-                "minutes_ago": 95,
-            },
-        ],
-        "maintenance": [
-            {
-                "component": "Cooling System",
-                "failure_type": "Heat exchanger fouling",
-                "issue_description": "Reduced cooling effectiveness with elevated discharge temperature.",
-                "maintenance_action": "Isolated the compressor and started aftercooler chemical cleaning.",
-                "technician": "Demo Technician B",
-                "status": "Completed",
-                "maintenance_days_ago": 0,
-            },
-        ],
-    },
-]
+DEFAULT_READINGS_PER_MACHINE = 500
+DEFAULT_TECHNICIAN_LABEL = "PredictIQ Maintenance Team"
+DEFAULT_PUBLIC_LOCATION = "Public Demo Fleet"
+SOURCE_READING_SOURCES = ("WOKWI", "REAL_HARDWARE")
 
 
-def _clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
+def public_machine_id_for(source_machine_id: str) -> str:
+    """Stable, non-identifying public machine id for a source machine.
+
+    The hash suffix keeps the mapping deterministic while preventing a source id
+    from being exposed directly. The result always fits ``machines.machine_id``.
+    """
+    digest = hashlib.sha256(
+        f"predictiq:public-demo:machine:{source_machine_id}".encode("utf-8")
+    ).hexdigest()[:12].upper()
+    return f"PUB-{digest}"
 
 
-def _interpolate(start: float, end: float, progress: float) -> float:
-    return start + (end - start) * progress
+def demo_session_id_for(
+    source_organization_id: uuid.UUID, source_machine_id: str
+) -> uuid.UUID:
+    """Deterministic session id; re-provisioning reuses the same identity."""
+    return uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"predictiq:public-demo:session:{source_organization_id}:{source_machine_id}",
+    )
 
 
-def _reading_series(blueprint: Dict[str, Any], now: datetime) -> List[Dict[str, float]]:
-    """Deterministic 48-point telemetry series ending at ``now``."""
-    rng = random.Random(int(blueprint["seed"]))
-    values: List[Dict[str, float]] = []
-    for index in range(READING_COUNT):
-        progress = index / float(READING_COUNT - 1)
-        temperature = (
-            _interpolate(*blueprint["temperature"], progress)
-            + blueprint["temperature_wobble"] * math.sin(index / 3.1)
-            + rng.uniform(-0.6, 0.6)
+def resolve_source_organization(
+    db: Session,
+    *,
+    organization_id: Optional[uuid.UUID] = None,
+    slug: Optional[str] = None,
+) -> Organization:
+    """Resolve an operator-supplied source organization; never infer one."""
+    if bool(organization_id) == bool(slug):
+        raise ValueError("Provide exactly one of organization_id or slug.")
+    if organization_id is not None:
+        org = db.get(Organization, organization_id)
+    else:
+        org = db.query(Organization).filter(Organization.slug == slug).first()
+    if org is None:
+        raise ValueError("Source organization not found.")
+    if org.id == PUBLIC_DEMO_ORGANIZATION_ID or org.slug == PUBLIC_DEMO_ORGANIZATION_SLUG:
+        raise ValueError("The public demo organization cannot be used as its own source.")
+    return org
+
+
+def _count(db: Session, model: Any, *criteria: Any) -> int:
+    return int(db.query(func.count(model.id)).filter(*criteria).scalar() or 0)
+
+
+def _scrub_text(value: Optional[str], replacements: Sequence[tuple[str, str]]) -> Optional[str]:
+    """Replace known source identifiers in copied free-text fields."""
+    if not value:
+        return value
+    scrubbed = value
+    for old, new in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
+        if old and old in scrubbed:
+            scrubbed = scrubbed.replace(old, new)
+    return scrubbed
+
+
+def _machine_replacements(
+    db: Session, source_org: Organization, source_machine: Machine, public_machine_id: str
+) -> List[tuple[str, str]]:
+    replacements = [
+        (source_machine.machine_id, public_machine_id),
+        (source_org.slug, PUBLIC_DEMO_ORGANIZATION_SLUG),
+        (source_org.name, PUBLIC_DEMO_ORGANIZATION_NAME),
+    ]
+    device_ids = (
+        db.query(Device.device_id)
+        .filter(
+            Device.organization_id == source_org.id,
+            Device.machine_id == source_machine.machine_id,
         )
-        vibration = (
-            _interpolate(*blueprint["vibration"], progress)
-            + blueprint["vibration_wobble"] * math.sin(index / 2.4)
-            + rng.uniform(-0.05, 0.05)
+        .all()
+    )
+    replacements.extend((device_id, "public-demo-device") for (device_id,) in device_ids)
+    return replacements
+
+
+def source_organization_summaries(db: Session) -> List[Dict[str, Any]]:
+    """Read-only organization inventory for operator selection.
+
+    Contains no memberships, credentials, device ids or telemetry values.
+    """
+    organizations = db.query(Organization).order_by(Organization.slug.asc()).all()
+    summaries: List[Dict[str, Any]] = []
+    for org in organizations:
+        machine_query = db.query(Machine).filter(Machine.organization_id == org.id)
+        machine_count = int(machine_query.count())
+        machines_with_readings = int(
+            db.query(func.count(func.distinct(SensorReading.machine_id)))
+            .filter(
+                SensorReading.organization_id == org.id,
+                SensorReading.source.in_(SOURCE_READING_SOURCES),
+            )
+            .scalar()
+            or 0
         )
-        current = (
-            _interpolate(*blueprint["current"], progress)
-            + blueprint["current_wobble"] * math.sin(index / 4.2)
-            + rng.uniform(-0.08, 0.08)
+        latest_reading = (
+            db.query(func.max(SensorReading.timestamp))
+            .filter(
+                SensorReading.organization_id == org.id,
+                SensorReading.source.in_(SOURCE_READING_SOURCES),
+            )
+            .scalar()
         )
-        rpm = (
-            _interpolate(*blueprint["rpm"], progress)
-            + blueprint["rpm_wobble"] * math.sin(index / 5.0)
-            + rng.uniform(-1.5, 1.5)
-        )
-        values.append(
+        summaries.append(
             {
-                "timestamp": (
-                    now - timedelta(minutes=READING_INTERVAL_MINUTES * (READING_COUNT - 1 - index))
-                ).timestamp(),
-                "temperature": round(_clamp(temperature, -50.0, 300.0), 2),
-                "vibration": round(_clamp(vibration, 0.0, 100.0), 3),
-                "current": round(_clamp(current, 0.0, 1000.0), 2),
-                "rpm": round(_clamp(rpm, 0.0, 60000.0), 1),
+                "organization_id": str(org.id),
+                "slug": org.slug,
+                "name": org.name,
+                "status": org.status,
+                "is_public_demo": org.id == PUBLIC_DEMO_ORGANIZATION_ID,
+                "machines": machine_count,
+                "machines_with_readings": machines_with_readings,
+                "readings": _count(
+                    db,
+                    SensorReading,
+                    SensorReading.organization_id == org.id,
+                    SensorReading.source.in_(SOURCE_READING_SOURCES),
+                ),
+                "alerts": _count(db, Alert, Alert.organization_id == org.id),
+                "predictions": _count(
+                    db, Prediction, Prediction.organization_id == org.id
+                ),
+                "maintenance": _count(
+                    db, MaintenanceRecord, MaintenanceRecord.organization_id == org.id
+                ),
+                "latest_reading": latest_reading,
             }
         )
-    return values
+    return summaries
 
 
-def _impact_label(ratio: float) -> str:
-    if ratio >= 1.10:
-        return "Critical"
-    if ratio >= 1.00:
-        return "Very High"
-    if ratio >= 0.85:
-        return "High"
-    if ratio >= 0.70:
-        return "Above Normal"
-    return "Normal"
-
-
-def _contributing_factors(
-    machine: Machine, reading: Dict[str, float], importance: Dict[str, float]
+def source_machine_summaries(
+    db: Session, source_organization_id: uuid.UUID
 ) -> List[Dict[str, Any]]:
-    """Physics-heuristic attribution (NOT SHAP) consistent with the prototype engine."""
-    max_temp = machine.max_temp or 85.0
-    max_vibration = machine.max_vibration or 4.5
-    rated_current = machine.rated_current or 10.0
-    rated_rpm = machine.rated_rpm or 1450.0
-    rpm_deviation = abs(reading["rpm"] - rated_rpm) / rated_rpm if rated_rpm else 0.0
+    """Read-only machine inventory for one source organization."""
+    org = resolve_source_organization(db, organization_id=source_organization_id)
+    machines = (
+        db.query(Machine)
+        .filter(
+            Machine.organization_id == org.id,
+            Machine.is_demo.is_(False),
+        )
+        .order_by(Machine.machine_id.asc())
+        .all()
+    )
+    summaries: List[Dict[str, Any]] = []
+    for machine in machines:
+        readings_query = db.query(SensorReading).filter(
+            SensorReading.organization_id == org.id,
+            SensorReading.machine_id == machine.machine_id,
+            SensorReading.source.in_(SOURCE_READING_SOURCES),
+        )
+        reading_count = int(readings_query.count())
+        latest = readings_query.with_entities(
+            func.max(SensorReading.timestamp)
+        ).scalar()
+        summaries.append(
+            {
+                "machine_id": machine.machine_id,
+                "name": machine.name,
+                "type": machine.type,
+                "status": machine.status,
+                "readings": reading_count,
+                "latest_reading": latest,
+                "alerts": _count(
+                    db,
+                    Alert,
+                    Alert.organization_id == org.id,
+                    Alert.machine_id == machine.machine_id,
+                ),
+                "predictions": _count(
+                    db,
+                    Prediction,
+                    Prediction.organization_id == org.id,
+                    Prediction.machine_id == machine.machine_id,
+                ),
+                "maintenance": _count(
+                    db,
+                    MaintenanceRecord,
+                    MaintenanceRecord.organization_id == org.id,
+                    MaintenanceRecord.machine_id == machine.machine_id,
+                ),
+            }
+        )
+    return summaries
 
-    return [
-        {
-            "factor": "Temperature",
-            "impact": _impact_label(reading["temperature"] / max_temp),
-            "shap_value": round(importance.get("temperature", 0.0), 3),
-            "value_observed": f"{reading['temperature']:.1f} °C",
-            "threshold_reference": f"Rated maximum {max_temp:.1f} °C",
-            "description": "Thermal trend versus the asset's rated maximum operating temperature.",
-        },
-        {
-            "factor": "Vibration",
-            "impact": _impact_label(reading["vibration"] / max_vibration),
-            "shap_value": round(importance.get("vibration", 0.0), 3),
-            "value_observed": f"{reading['vibration']:.2f} mm/s RMS",
-            "threshold_reference": f"Rated maximum {max_vibration:.2f} mm/s RMS",
-            "description": "Vibration velocity trend versus the ISO-style rated envelope.",
-        },
-        {
-            "factor": "Current",
-            "impact": _impact_label(reading["current"] / rated_current),
-            "shap_value": round(importance.get("current", 0.0), 3),
-            "value_observed": f"{reading['current']:.2f} A",
-            "threshold_reference": f"Rated current {rated_current:.2f} A",
-            "description": "Electrical load relative to nameplate current.",
-        },
-        {
-            "factor": "RPM",
-            "impact": _impact_label(rpm_deviation / 0.10),
-            "shap_value": round(importance.get("rpm", 0.0), 3),
-            "value_observed": f"{reading['rpm']:.0f} RPM",
-            "threshold_reference": f"Rated speed {rated_rpm:.0f} RPM",
-            "description": "Speed deviation from the rated operating point.",
-        },
-    ]
+
+def _selected_source_machines(
+    db: Session, org: Organization, machine_ids: Sequence[str]
+) -> List[Machine]:
+    if not machine_ids:
+        raise ValueError("At least one source machine must be selected explicitly.")
+    machines = (
+        db.query(Machine)
+        .filter(
+            Machine.organization_id == org.id,
+            Machine.is_demo.is_(False),
+            Machine.machine_id.in_(list(machine_ids)),
+        )
+        .order_by(Machine.machine_id.asc())
+        .all()
+    )
+    found = {machine.machine_id for machine in machines}
+    missing = sorted(set(machine_ids) - found)
+    if missing:
+        raise ValueError(
+            "Selected machines were not found in the source organization: "
+            + ", ".join(missing)
+        )
+    return machines
 
 
 def _demo_machine_ids(db: Session, org: Organization) -> List[str]:
     rows = (
         db.query(Machine.machine_id)
-        .filter(Machine.organization_id == org.id, Machine.is_demo.is_(True))
+        .filter(
+            Machine.organization_id == org.id,
+            Machine.is_demo.is_(True),
+        )
         .all()
     )
     return [row[0] for row in rows]
 
 
-def _guard_against_machine_id_collisions(db: Session) -> None:
-    """Never adopt a machine ID that already belongs to another organization."""
-    blueprint_ids = [item["machine_id"] for item in MACHINE_BLUEPRINTS]
-    collisions = (
-        db.query(Machine.machine_id, Machine.organization_id)
-        .filter(Machine.machine_id.in_(blueprint_ids))
-        .all()
-    )
-    for machine_id, organization_id in collisions:
-        if organization_id != PUBLIC_DEMO_ORGANIZATION_ID:
-            raise RuntimeError(
-                f"Refusing to seed public demo data: machine '{machine_id}' already exists in "
-                "another organization."
+def _require_source_readings(
+    db: Session, org: Organization, machines: Iterable[Machine]
+) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    empty: List[str] = []
+    for machine in machines:
+        count = int(
+            db.query(func.count(SensorReading.id))
+            .filter(
+                SensorReading.organization_id == org.id,
+                SensorReading.machine_id == machine.machine_id,
+                SensorReading.source.in_(SOURCE_READING_SOURCES),
             )
+            .scalar()
+            or 0
+        )
+        counts[machine.machine_id] = count
+        if count == 0:
+            empty.append(machine.machine_id)
+    if empty:
+        raise ValueError(
+            "Selected machines have no copyable historical readings: "
+            + ", ".join(sorted(empty))
+        )
+    return counts
 
 
 def _purge_demo_rows(db: Session, org: Organization) -> None:
-    """Delete only demo-organization rows. Never touches another tenant."""
+    """Delete only rows owned by the demo organization."""
     machine_ids = _demo_machine_ids(db, org)
     machine_filter = machine_ids or [""]
 
@@ -486,7 +349,8 @@ def _purge_demo_rows(db: Session, org: Organization) -> None:
     db.execute(delete(DemoSession).where(DemoSession.organization_id == org.id))
     db.execute(
         delete(Machine).where(
-            Machine.organization_id == org.id, Machine.is_demo.is_(True)
+            Machine.organization_id == org.id,
+            Machine.is_demo.is_(True),
         )
     )
 
@@ -508,60 +372,91 @@ def public_demo_counts(db: Session, org: Optional[Organization] = None) -> Dict[
 
     demo_machine_ids = _demo_machine_ids(db, org)
 
-    def count(model, *criteria) -> int:
-        return int(
-            db.query(func.count(model.id)).filter(*criteria).scalar() or 0
-        )
-
     return {
         "machines": len(demo_machine_ids),
-        "sessions": count(DemoSession, DemoSession.organization_id == org.id),
-        "readings": count(
+        "sessions": _count(db, DemoSession, DemoSession.organization_id == org.id),
+        "readings": _count(
+            db,
             SensorReading,
             SensorReading.organization_id == org.id,
             SensorReading.source == PUBLIC_DEMO_PROVENANCE,
         ),
-        "predictions": count(
-            Prediction, Prediction.organization_id == org.id
-        ),
-        "alerts": count(Alert, Alert.organization_id == org.id),
-        "maintenance": count(
-            MaintenanceRecord, MaintenanceRecord.organization_id == org.id
+        "predictions": _count(db, Prediction, Prediction.organization_id == org.id),
+        "alerts": _count(db, Alert, Alert.organization_id == org.id),
+        "maintenance": _count(
+            db, MaintenanceRecord, MaintenanceRecord.organization_id == org.id
         ),
     }
 
 
-def seed_public_demo_dataset(
+def copy_public_demo_from_source(
     db: Session,
+    source_organization_id: uuid.UUID,
     *,
-    reset: bool = False,
-    now: Optional[datetime] = None,
+    machine_ids: Sequence[str],
+    readings_per_machine: int = DEFAULT_READINGS_PER_MACHINE,
+    include_alerts: bool = True,
+    include_predictions: bool = True,
+    include_maintenance: bool = True,
+    redact_location: bool = True,
+    technician_label: str = DEFAULT_TECHNICIAN_LABEL,
+    refresh: bool = False,
     commit: bool = True,
 ) -> Dict[str, int]:
-    """Provision the demo organization/dataset. Idempotent unless ``reset=True``.
+    """Copy selected real source rows into the isolated public demo organization.
 
-    Raises ``RuntimeError`` when a demo machine ID is already owned by another
-    organization. No production row is ever read from, written to, or deleted.
+    ``source_organization_id`` and ``machine_ids`` are required; no source tenant
+    or asset is ever inferred. The source organization is only read.
     """
-    reference = now or datetime.now(timezone.utc)
-    if reference.tzinfo is None:
-        reference = reference.replace(tzinfo=timezone.utc)
+    if readings_per_machine < 0:
+        raise ValueError("readings_per_machine must be >= 0 (0 means all readings).")
+    if not technician_label.strip():
+        raise ValueError("technician_label must not be empty.")
 
-    org = db.get(Organization, PUBLIC_DEMO_ORGANIZATION_ID)
-    if org is not None and org.slug != PUBLIC_DEMO_ORGANIZATION_SLUG:
+    source_org = resolve_source_organization(
+        db, organization_id=source_organization_id
+    )
+    source_machines = _selected_source_machines(db, source_org, machine_ids)
+    _require_source_readings(db, source_org, source_machines)
+
+    public_ids = {
+        machine.machine_id: public_machine_id_for(machine.machine_id)
+        for machine in source_machines
+    }
+    collisions = (
+        db.query(Machine.machine_id, Machine.organization_id)
+        .filter(Machine.machine_id.in_(list(public_ids.values())))
+        .all()
+    )
+    for machine_id, organization_id in collisions:
+        if organization_id != PUBLIC_DEMO_ORGANIZATION_ID:
+            raise RuntimeError(
+                f"Refusing to provision: public machine id '{machine_id}' already "
+                "exists in another organization."
+            )
+
+    demo_org = db.get(Organization, PUBLIC_DEMO_ORGANIZATION_ID)
+    if demo_org is not None and demo_org.slug != PUBLIC_DEMO_ORGANIZATION_SLUG:
         raise RuntimeError(
-            "Refusing to seed public demo data: the reserved demo organization id "
-            "belongs to a differently named organization."
+            "Refusing to provision: the reserved demo organization id belongs to "
+            "a differently named organization."
         )
 
-    _guard_against_machine_id_collisions(db)
-
-    if reset and org is not None:
-        _purge_demo_rows(db, org)
+    has_demo_rows = demo_org is not None and bool(
+        _demo_machine_ids(db, demo_org)
+        or _count(db, DemoSession, DemoSession.organization_id == demo_org.id)
+    )
+    if demo_org is not None and has_demo_rows:
+        if not refresh:
+            if commit:
+                db.commit()
+            return public_demo_counts(db, demo_org)
+        _purge_demo_rows(db, demo_org)
         db.flush()
 
-    if org is None:
-        org = Organization(
+    reference = datetime.now(timezone.utc)
+    if demo_org is None:
+        demo_org = Organization(
             id=PUBLIC_DEMO_ORGANIZATION_ID,
             name=PUBLIC_DEMO_ORGANIZATION_NAME,
             slug=PUBLIC_DEMO_ORGANIZATION_SLUG,
@@ -569,160 +464,184 @@ def seed_public_demo_dataset(
             created_at=reference,
             updated_at=reference,
         )
-        db.add(org)
+        db.add(demo_org)
         db.flush()
 
-    if _demo_machine_ids(db, org):
-        # Already provisioned: leave the dataset untouched.
-        if commit:
-            db.commit()
-        return public_demo_counts(db, org)
-
     try:
-        for blueprint in MACHINE_BLUEPRINTS:
-            specs = blueprint["specifications"]
-            machine = Machine(
-                organization_id=org.id,
-                machine_id=blueprint["machine_id"],
-                name=blueprint["name"],
-                type=blueprint["type"],
-                location=blueprint["location"],
-                status=blueprint["status"],
+        for source_machine in source_machines:
+            public_machine_id = public_ids[source_machine.machine_id]
+            session_id = demo_session_id_for(
+                source_org.id, source_machine.machine_id
+            )
+            replacements = _machine_replacements(
+                db, source_org, source_machine, public_machine_id
+            )
+
+            demo_machine = Machine(
+                organization_id=demo_org.id,
+                machine_id=public_machine_id,
+                name=_scrub_text(source_machine.name, replacements),
+                type=_scrub_text(source_machine.type, replacements),
+                location=DEFAULT_PUBLIC_LOCATION
+                if redact_location
+                else _scrub_text(source_machine.location, replacements),
+                status=source_machine.status,
                 is_demo=True,
-                rated_rpm=specs["rated_rpm"],
-                rated_current=specs["rated_current"],
-                max_temp=specs["max_temp"],
-                max_vibration=specs["max_vibration"],
-                created_at=reference - timedelta(days=14),
+                rated_rpm=source_machine.rated_rpm,
+                rated_current=source_machine.rated_current,
+                max_temp=source_machine.max_temp,
+                max_vibration=source_machine.max_vibration,
+                created_at=source_machine.created_at,
             )
-            db.add(machine)
+            db.add(demo_machine)
             db.flush()
 
-            session = DemoSession(
-                organization_id=org.id,
-                machine_id=machine.machine_id,
-                name=f"Public Demo - {machine.name}",
-                status="ACTIVE",
-                created_by=None,
-                created_at=reference - timedelta(days=14),
+            db.add(
+                DemoSession(
+                    id=session_id,
+                    organization_id=demo_org.id,
+                    machine_id=public_machine_id,
+                    name=f"Public Demo - {demo_machine.name}"[:120],
+                    status="ACTIVE",
+                    created_by=None,
+                    created_at=source_machine.created_at or reference,
+                    closed_at=None,
+                )
             )
-            db.add(session)
             db.flush()
 
-            series = _reading_series(blueprint, reference)
-            for point in series:
+            reading_query = (
+                db.query(SensorReading)
+                .filter(
+                    SensorReading.organization_id == source_org.id,
+                    SensorReading.machine_id == source_machine.machine_id,
+                    SensorReading.source.in_(SOURCE_READING_SOURCES),
+                )
+                .order_by(SensorReading.timestamp.desc(), SensorReading.id.desc())
+            )
+            if readings_per_machine:
+                reading_query = reading_query.limit(readings_per_machine)
+            readings = list(reversed(reading_query.all()))
+
+            for reading in readings:
                 db.add(
                     SensorReading(
-                        organization_id=org.id,
-                        machine_id=machine.machine_id,
+                        organization_id=demo_org.id,
+                        machine_id=public_machine_id,
                         device_id=None,
-                        demo_session_id=session.id,
-                        timestamp=datetime.fromtimestamp(point["timestamp"], tz=timezone.utc),
-                        temperature=point["temperature"],
-                        vibration=point["vibration"],
-                        current=point["current"],
-                        rpm=point["rpm"],
+                        demo_session_id=session_id,
+                        timestamp=reading.timestamp,
+                        temperature=reading.temperature,
+                        vibration=reading.vibration,
+                        current=reading.current,
+                        rpm=reading.rpm,
                         source=PUBLIC_DEMO_PROVENANCE,
-                        created_at=reference,
+                        created_at=reading.created_at,
                     )
                 )
 
-            prediction_spec = blueprint["prediction"]
-            latest = series[-1]
-            db.add(
-                Prediction(
-                    organization_id=org.id,
-                    machine_id=machine.machine_id,
-                    demo_session_id=session.id,
-                    timestamp=datetime.fromtimestamp(latest["timestamp"], tz=timezone.utc),
-                    failure_probability=prediction_spec["failure_probability"],
-                    component=prediction_spec["component"],
-                    remaining_life_days=prediction_spec["remaining_life_days"],
-                    confidence=prediction_spec["confidence"],
-                    explanation=prediction_spec["explanation"],
-                    recommended_action=prediction_spec["recommended_action"],
-                    model_version="physics-rule-v1",
-                    is_prototype=True,
-                    explanation_data=_explanation_json(machine, latest, prediction_spec),
-                    input_hash=None,
-                    created_at=reference,
-                )
-            )
-
-            for alert_spec in blueprint["alerts"]:
-                created_at = reference - timedelta(minutes=alert_spec["minutes_ago"])
-                resolved_at = (
-                    reference - timedelta(minutes=alert_spec["resolved_minutes_ago"])
-                    if alert_spec.get("resolved_minutes_ago") is not None
-                    else None
-                )
-                db.add(
-                    Alert(
-                        organization_id=org.id,
-                        machine_id=machine.machine_id,
-                        demo_session_id=session.id,
-                        alert_type=alert_spec["alert_type"],
-                        severity=alert_spec["severity"],
-                        message=alert_spec["message"],
-                        status=alert_spec["status"],
-                        created_at=created_at,
-                        resolved_at=resolved_at,
+            if include_predictions:
+                predictions = (
+                    db.query(Prediction)
+                    .filter(
+                        Prediction.organization_id == source_org.id,
+                        Prediction.machine_id == source_machine.machine_id,
                     )
+                    .order_by(Prediction.timestamp.asc(), Prediction.id.asc())
+                    .all()
                 )
-
-            for record_spec in blueprint["maintenance"]:
-                maintenance_date = reference - timedelta(
-                    days=record_spec["maintenance_days_ago"]
-                )
-                failure_date = (
-                    reference - timedelta(days=record_spec["failure_days_ago"])
-                    if record_spec.get("failure_days_ago") is not None
-                    else None
-                )
-                db.add(
-                    MaintenanceRecord(
-                        organization_id=org.id,
-                        machine_id=machine.machine_id,
-                        component=record_spec["component"],
-                        failure_type=record_spec.get("failure_type"),
-                        issue_description=record_spec["issue_description"],
-                        maintenance_action=record_spec["maintenance_action"],
-                        technician=record_spec["technician"],
-                        status=record_spec["status"],
-                        failure_date=failure_date,
-                        maintenance_date=maintenance_date,
-                        created_at=reference,
+                for prediction in predictions:
+                    db.add(
+                        Prediction(
+                            organization_id=demo_org.id,
+                            machine_id=public_machine_id,
+                            demo_session_id=session_id,
+                            timestamp=prediction.timestamp,
+                            failure_probability=prediction.failure_probability,
+                            component=_scrub_text(prediction.component, replacements),
+                            remaining_life_days=prediction.remaining_life_days,
+                            confidence=prediction.confidence,
+                            explanation=_scrub_text(prediction.explanation, replacements),
+                            recommended_action=_scrub_text(
+                                prediction.recommended_action, replacements
+                            ),
+                            model_version=_scrub_text(
+                                prediction.model_version, replacements
+                            ),
+                            is_prototype=prediction.is_prototype,
+                            explanation_data=_scrub_text(
+                                prediction.explanation_data, replacements
+                            ),
+                            input_hash=None,
+                            created_at=prediction.created_at,
+                        )
                     )
+
+            if include_alerts:
+                alerts = (
+                    db.query(Alert)
+                    .filter(
+                        Alert.organization_id == source_org.id,
+                        Alert.machine_id == source_machine.machine_id,
+                    )
+                    .order_by(Alert.created_at.asc(), Alert.id.asc())
+                    .all()
                 )
+                for alert in alerts:
+                    db.add(
+                        Alert(
+                            organization_id=demo_org.id,
+                            machine_id=public_machine_id,
+                            demo_session_id=session_id,
+                            alert_type=_scrub_text(alert.alert_type, replacements),
+                            severity=alert.severity,
+                            message=_scrub_text(alert.message, replacements),
+                            status=alert.status,
+                            created_at=alert.created_at,
+                            resolved_at=alert.resolved_at,
+                        )
+                    )
+
+            if include_maintenance:
+                maintenance = (
+                    db.query(MaintenanceRecord)
+                    .filter(
+                        MaintenanceRecord.organization_id == source_org.id,
+                        MaintenanceRecord.machine_id == source_machine.machine_id,
+                    )
+                    .order_by(
+                        MaintenanceRecord.maintenance_date.asc(),
+                        MaintenanceRecord.id.asc(),
+                    )
+                    .all()
+                )
+                for record in maintenance:
+                    db.add(
+                        MaintenanceRecord(
+                            organization_id=demo_org.id,
+                            machine_id=public_machine_id,
+                            component=_scrub_text(record.component, replacements),
+                            failure_type=_scrub_text(record.failure_type, replacements),
+                            issue_description=_scrub_text(
+                                record.issue_description, replacements
+                            ),
+                            maintenance_action=_scrub_text(
+                                record.maintenance_action, replacements
+                            ),
+                            technician=technician_label.strip(),
+                            status=record.status,
+                            failure_date=record.failure_date,
+                            maintenance_date=record.maintenance_date,
+                            created_at=record.created_at,
+                        )
+                    )
 
         if commit:
             db.commit()
+        else:
+            db.flush()
     except Exception:
         db.rollback()
         raise
 
-    return public_demo_counts(db, org)
-
-
-def _explanation_json(
-    machine: Machine, latest: Dict[str, float], prediction_spec: Dict[str, Any]
-) -> str:
-    """Serialized explanation payload matching the authenticated prediction contract."""
-    import json
-
-    factors = _contributing_factors(
-        machine, latest, prediction_spec["feature_importance"]
-    )
-    reasons = [
-        f"{factor['factor']} observed at {factor['value_observed']} "
-        f"(reference: {factor['threshold_reference']})."
-        for factor in factors
-        if factor["impact"] not in ("Normal", "Low")
-    ]
-    return json.dumps(
-        {
-            "feature_importance": prediction_spec["feature_importance"],
-            "contributing_factors": factors,
-            "reasons": reasons,
-        }
-    )
+    return public_demo_counts(db, demo_org)

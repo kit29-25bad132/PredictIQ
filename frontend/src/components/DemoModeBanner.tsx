@@ -1,10 +1,10 @@
 import React from 'react';
-import { FlaskConical, Lock, LogIn, ArrowLeft, Info } from 'lucide-react';
+import { FlaskConical, Lock, UserPlus, ArrowLeft, Info } from 'lucide-react';
 import type { DemoDatasetInfo } from '../services/demoApi';
 
 interface DemoModeBannerProps {
   dataset: DemoDatasetInfo | null;
-  onSignIn: () => void;
+  onSignUp: () => void;
   onExit: () => void;
 }
 
@@ -13,12 +13,12 @@ interface DemoModeBannerProps {
  *
  * Requirement: the demo must always look like the product while being
  * unmistakably labelled as demo. This banner is rendered on every demo section
- * (it sits above the scrolling page content), names the simulated dataset, and
+ * (it sits above the scrolling page content), names the copied historical dataset, and
  * carries the conversion action.
  */
 export const DemoModeBanner: React.FC<DemoModeBannerProps> = ({
   dataset,
-  onSignIn,
+  onSignUp,
   onExit,
 }) => {
   return (
@@ -37,16 +37,20 @@ export const DemoModeBanner: React.FC<DemoModeBannerProps> = ({
                 Demo mode
               </span>
               <span className="font-semibold text-amber-100">
-                {dataset?.label || 'Public Demo Fleet (simulated dataset)'}
+                {dataset?.label || 'Public Demo Fleet (historical production data)'}
               </span>
               <span className="inline-flex items-center gap-1 rounded bg-slate-900/70 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-300 border border-slate-700">
                 <Lock className="h-2.5 w-2.5" /> Read-only
               </span>
             </div>
+            <p className="mt-1 font-semibold text-amber-100">
+              This is a live demo using isolated demo data. No account required.
+              No real customer data is shown.
+            </p>
             <p className="mt-1 text-amber-100/80">
               <Info className="mr-1 inline h-3 w-3 align-text-bottom" />
               {dataset?.notice ||
-                'This dashboard shows a simulated demo dataset stored in PostgreSQL. It is not live machine telemetry, and no record can be created, changed, acknowledged, or deleted.'}
+                'This dashboard shows records in an isolated, read-only demo dataset. Direct identifiers, devices, credentials and personal data are removed, and no record can be created, changed, acknowledged, or deleted.'}
             </p>
           </div>
         </div>
@@ -61,12 +65,12 @@ export const DemoModeBanner: React.FC<DemoModeBannerProps> = ({
             <span>Back to site</span>
           </button>
           <button
-            id="btn-demo-signin"
-            onClick={onSignIn}
+            id="btn-demo-signup"
+            onClick={onSignUp}
             className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-cyan-400 transition-colors shadow-sm shadow-cyan-500/20"
           >
-            <LogIn className="h-3.5 w-3.5" />
-            <span>Sign in to your workspace</span>
+            <UserPlus className="h-3.5 w-3.5" />
+            <span>Sign up for free</span>
           </button>
         </div>
       </div>
