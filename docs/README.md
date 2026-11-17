@@ -22,6 +22,54 @@ By combining an ESP32-S3-based telemetry system, a FastAPI backend, PostgreSQL p
 | Demo video | [Watch PredictIQ Demo](https://www.youtube.com/watch?v=U7BK0XuoIL8&t=2s) |
 | Developer | Rishi V |
 
+
+
+
+## Use PredictIQ — public demo (no sign-in required)
+
+You can explore the hosted PredictIQ web application directly. **You do not need to create an account, sign in, install anything, or connect hardware to try the public demo.**
+
+<https://predictiq-neon.vercel.app/>
+
+### Quick start
+
+1. Open the [PredictIQ live application](https://predictiq-neon.vercel.app/).
+2. Enter the application through the public demo experience. No login is required.
+3. Explore the machine dashboard and the machine information available in the deployed demo.
+4. Review the available machine readings and health/condition information to understand the machine's operating state.
+5. Open available alerts, prediction outputs, and maintenance information to investigate the evidence behind a machine condition.
+6. Where Gemini assistance is available in the deployed version, use it to ask questions about the machine context shown in the application. Treat its response as assistance, not as a verified diagnosis.
+
+### What can I try?
+
+| Demo area | What to explore |
+|---|---|
+| Machine dashboard | Browse the machines and the information presented for each one |
+| Sensor readings | Review available temperature, vibration, current, and RPM data |
+| Machine health | Understand the condition reported by the implemented analysis |
+| Alerts | Inspect abnormal-condition alerts and their context |
+| Predictions | Review the prototype's rule-based prediction outputs |
+| Maintenance | Explore maintenance records available in the demo |
+| Gemini assistance | Ask for help interpreting available machine information, when enabled |
+
+The exact records and actions visible depend on the currently deployed application and the demo data provisioned on the backend.
+
+### Do I need hardware?
+
+No. Hardware is **not required** to explore the public web demo. The hosted application is the quickest way to understand the user-facing workflow.
+
+If you want to work with the device workflow, the project also supports development and testing with an ESP32-S3 or Wokwi simulation. That setup is optional and is covered in the [Hardware and simulation](#hardware-and-simulation) and [Local development](#local-development) sections below.
+
+### Demo vs. local development
+
+- **Just want to try PredictIQ?** Open the [public demo](https://predictiq-neon.vercel.app/). No sign-in or local setup is required.
+- **Want to develop or run your own instance?** Follow the [Local development](#local-development) instructions. You will need to configure the backend, database, frontend, and any required credentials.
+- **Want to test physical telemetry?** Configure an ESP32-S3 or Wokwi firmware instance with the appropriate backend endpoint and device-ingestion credentials.
+
+The public demo is intended for exploration and demonstration. Do not use it as a safety-critical control system or rely on prototype predictions as a substitute for qualified maintenance decisions.
+
+---
+
 ---
 
 ## The problem
