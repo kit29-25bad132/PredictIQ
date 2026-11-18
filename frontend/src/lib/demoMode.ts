@@ -19,27 +19,20 @@ export const DEMO_ROOT_PATH = '/demo';
  */
 export const DEMO_TAB_IDS: NavTab[] = [
   'dashboard',
+  '3d-view',
   'machines',
   'machine-details',
+  'monitoring',
   'predictions',
   'maintenance',
   'alerts',
-  'sensor-data',
-];
-
-/**
- * Authenticated-only surfaces kept out of the public demo:
- * - 3d-view / monitoring: driven by the simulation + hardware providers, which
- *   read and write authenticated simulation configuration;
- * - feedback: a technician data-capture form (write-only);
- * - settings: per-deployment diagnostics and API configuration.
- */
-export const DEMO_HIDDEN_TABS: NavTab[] = [
-  '3d-view',
-  'monitoring',
   'feedback',
+  'sensor-data',
   'settings',
 ];
+
+/** All authenticated navigation remains discoverable in preview mode. */
+export const DEMO_HIDDEN_TABS: NavTab[] = [];
 
 function normalisePath(pathname: string): string {
   const clean = (pathname || '/').split('?')[0].split('#')[0];

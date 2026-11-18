@@ -10,6 +10,7 @@ import PredictionsPage from '../pages/PredictionsPage';
 import MaintenancePage from '../pages/MaintenancePage';
 import AlertsPage from '../pages/AlertsPage';
 import SensorDataPage from '../pages/SensorDataPage';
+import DemoFeaturePreview from './DemoFeaturePreview';
 import { AlarmProvider } from '../context/AlarmContext';
 import { DemoProvider, useDemo } from '../context/DemoContext';
 import demoApi from '../services/demoApi';
@@ -19,6 +20,7 @@ import {
   demoTabPath,
   resolveDemoTab,
 } from '../lib/demoMode';
+import { buildSignInPath } from '../lib/authGuard';
 
 /**
  * Public demo workbench.
@@ -256,6 +258,14 @@ const DemoWorkbench: React.FC<DemoWorkbenchProps> = ({
             />
           )}
 
+          {activeTab === '3d-view' && (
+            <DemoFeaturePreview
+              title="3D Machine View"
+              description="The interactive digital twin uses authenticated machine telemetry and controls. Sign in to inspect your organization’s live 3D view."
+              onSignIn={onSignIn}
+            />
+          )}
+
           {activeTab === 'machine-details' && (
             <MachineDetailsPage
               machineId={selectedMachineId}
@@ -279,6 +289,14 @@ const DemoWorkbench: React.FC<DemoWorkbenchProps> = ({
             />
           )}
 
+          {activeTab === 'monitoring' && (
+            <DemoFeaturePreview
+              title="Live Monitoring"
+              description="Live monitoring and simulation controls require an authenticated workspace. Sign in to unlock real-time machine monitoring."
+              onSignIn={onSignIn}
+            />
+          )}
+
           {activeTab === 'maintenance' && (
             <MaintenancePage
               machines={machines}
@@ -298,6 +316,14 @@ const DemoWorkbench: React.FC<DemoWorkbenchProps> = ({
             />
           )}
 
+          {activeTab === 'feedback' && (
+            <DemoFeaturePreview
+              title="Feedback & Ground Truth"
+              description="Technician feedback records and submissions are available only to authenticated operators. Sign in to record ground truth."
+              onSignIn={onSignIn}
+            />
+          )}
+
           {activeTab === 'sensor-data' && (
             <SensorDataPage
               machines={machines}
@@ -305,6 +331,14 @@ const DemoWorkbench: React.FC<DemoWorkbenchProps> = ({
               onSelectMachine={handleSelectMachine}
               dataService={demoApi}
               readOnly
+            />
+          )}
+
+          {activeTab === 'settings' && (
+            <DemoFeaturePreview
+              title="System Status"
+              description="Workspace diagnostics and machine configuration are protected features. Sign in to view system status and manage configuration."
+              onSignIn={onSignIn}
             />
           )}
         </main>
@@ -326,7 +360,7 @@ interface DemoDashboardProps {
  */
 export const DemoDashboard: React.FC<DemoDashboardProps> = ({
   onExit = () => window.location.assign('/'),
-  onSignIn = () => window.location.assign('/signin'),
+  onSignIn = () => window.location.assign(buildSignInPath(window.location.pathname)),
   onSignUp = () => window.location.assign('/signup'),
 }) => (
   <DemoProvider>
