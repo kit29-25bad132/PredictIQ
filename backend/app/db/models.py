@@ -291,7 +291,8 @@ class SensorReading(Base):
         index=True,
         nullable=False,
     )
-    # NULL only for MANUAL_DEMO rows: demo readings have no device identity.
+    # NULL for MANUAL_DEMO and authenticated MANUAL_INPUT rows: neither has a
+    # device identity. WOKWI/REAL_HARDWARE rows always identify a device.
     device_id = Column(
         String(100),
         ForeignKey("devices.device_id", ondelete="CASCADE"),
@@ -323,7 +324,7 @@ class SensorReading(Base):
         Index("ix_sensor_readings_machine_timestamp", "machine_id", "timestamp"),
         Index("ix_sensor_readings_device_timestamp", "device_id", "timestamp"),
         CheckConstraint(
-            "source IN ('WOKWI', 'REAL_HARDWARE', 'MANUAL_DEMO')",
+            "source IN ('WOKWI', 'REAL_HARDWARE', 'MANUAL_DEMO', 'MANUAL_INPUT')",
             name="ck_sensor_readings_source",
         ),
         # Demo isolation at the database layer: a demo reading has a session and
@@ -332,6 +333,7 @@ class SensorReading(Base):
         # WOKWI/REAL_HARDWARE provenance.
         CheckConstraint(
             "(source = 'MANUAL_DEMO' AND demo_session_id IS NOT NULL AND device_id IS NULL) "
+            "OR (source = 'MANUAL_INPUT' AND demo_session_id IS NULL AND device_id IS NULL) "
             "OR (source IN ('WOKWI', 'REAL_HARDWARE') AND demo_session_id IS NULL AND device_id IS NOT NULL)",
             name="ck_sensor_readings_demo_coherence",
         ),

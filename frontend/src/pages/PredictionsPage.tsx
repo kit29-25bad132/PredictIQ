@@ -55,7 +55,7 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitFeedback, setSubmitFeedback] = useState<string | null>(null);
 
-  // Manual Real Sensor Measurement Inputs for Real Hardware Testing
+  // Authenticated manual measurement inputs; never represented as hardware data.
   const [manualTemp, setManualTemp] = useState<number>(68.5);
   const [manualVib, setManualVib] = useState<number>(2.4);
   const [manualCurrent, setManualCurrent] = useState<number>(10.2);
@@ -104,14 +104,13 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
     setSubmitFeedback(null);
     try {
       const res = await api.sendSensorData({
-        device_id: activeMachine?.devices?.[0]?.device_id || `ESP32_${selectedMachineId}`,
         machine_id: selectedMachineId,
         temperature: manualTemp,
         vibration: manualVib,
         current: manualCurrent,
         rpm: manualRpm,
       });
-      setSubmitFeedback(`Successfully stored real measurement into PostgreSQL (Reading ID: ${res.id})`);
+      setSubmitFeedback(`Successfully stored manual measurement into PostgreSQL (Reading ID: ${res.id})`);
       fetchStatusAndPrediction(selectedMachineId);
     } catch (err: any) {
       setSubmitFeedback(`Error saving measurement: ${err.message || err}`);
@@ -172,7 +171,7 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
               <div className="flex items-center gap-2">
                 <Sliders className="h-4 w-4 text-cyan-400" />
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                  Real Measurement Injection
+                  Manual Measurement Input
                 </h3>
               </div>
               <span className="text-[11px] font-mono text-cyan-400">
@@ -268,7 +267,7 @@ export const PredictionsPage: React.FC<PredictionsPageProps> = ({
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2.5 text-xs font-bold text-slate-950 hover:from-cyan-400 hover:to-blue-500 shadow-lg shadow-cyan-500/20 transition-all disabled:opacity-50"
               >
                 <Send className="h-4 w-4" />
-                <span>{isSubmitting ? 'Storing in PostgreSQL...' : 'Store Real Measurement in PostgreSQL'}</span>
+                <span>{isSubmitting ? 'Storing in PostgreSQL...' : 'Store Manual Measurement in PostgreSQL'}</span>
               </button>
             </div>
           </div>

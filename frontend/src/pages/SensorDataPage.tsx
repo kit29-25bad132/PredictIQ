@@ -117,7 +117,7 @@ export const SensorDataPage: React.FC<SensorDataPageProps> = ({
               className="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
             >
               <Plus className="h-3.5 w-3.5 stroke-[3]" />
-              <span>Manual Real Input</span>
+              <span>Manual Input</span>
             </button>
           )}
         </div>

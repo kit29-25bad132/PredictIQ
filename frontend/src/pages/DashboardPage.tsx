@@ -32,6 +32,7 @@ import { useAlarm } from '../context/AlarmContext';
 import AlarmStatusBar from '../components/AlarmStatusBar';
 import AlarmSettingsModal from '../components/AlarmSettingsModal';
 import AlarmHistoryPanel from '../components/AlarmHistoryPanel';
+import { useAuth } from '../context/AuthContext';
 
 interface DashboardPageProps {
   machines: Machine[];
@@ -62,6 +63,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   demoMode = false,
 }) => {
   const { thresholds } = useAlarm();
+  const { user, workspace, workspaceLoading } = useAuth();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -188,7 +190,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                     : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
                 }`}>
-                  {demoMode ? 'Demo Mode' : 'Public Read View'}
+                  {demoMode ? 'Demo Mode' : workspaceLoading ? 'Preparing Workspace' : workspace ? 'Authenticated Workspace' : 'Public Read View'}
                 </span>
               </div>
 
@@ -199,7 +201,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </span>
                 <span>&bull;</span>
                 <span className="font-mono text-slate-500">
-                  {demoMode ? 'Demo visitor (read-only)' : 'Anonymous session'}
+                  {demoMode ? 'Demo visitor (read-only)' : workspace ? `${user?.email || 'Authenticated user'} · ${workspace.name}` : 'Anonymous session'}
                 </span>
               </div>
             </div>
@@ -246,7 +248,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   className="flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all shadow-md shadow-cyan-500/20"
                 >
                   <Plus className="h-3.5 w-3.5 stroke-[3]" />
-                  <span>Manual Real Input</span>
+                  <span>Manual Input</span>
                 </button>
               </>
             )}
@@ -257,7 +259,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       {/* ========================================================================= */}
       {/* 2. REAL-TIME AUDIBLE ALARM SYSTEM STATUS & CONTROL BAR                     */}
       {/* ========================================================================= */}
-      <AlarmStatusBar onOpenSettings={() => setIsAlarmSettingsOpen(true)} />
+      <AlarmStatusBar onOpenSettings={() => setIsAlarmSettingsOpen(true)} hasTelemetry={Boolean(latestReading)} />
 
       {/* ========================================================================= */}
       {/* 3. REAL-TIME SENSOR TELEMETRY CARDS (DS18B20, MPU6050, ACS712, RPM)       */}
@@ -274,7 +276,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   Real-Time Multi-Sensor Telemetry
                 </h3>
                 {/* Source Badge */}
-                {latestReading?.source === 'MANUAL_DEMO' ? (
+                {latestReading?.source === 'MANUAL_INPUT' ? (
+                  <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    <Info className="h-3 w-3" /> AUTHENTICATED MANUAL INPUT
+                  </span>
+                ) : latestReading?.source === 'MANUAL_DEMO' ? (
                   <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                     <Info className="h-3 w-3" /> DEMO DATASET (HISTORICAL)
                   </span>
@@ -295,6 +301,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <p className="text-[11px] text-slate-400 mt-0.5">
                 {demoMode
                   ? 'Historical readings copied into the isolated demo dataset — not live hardware telemetry'
+                  : latestReading?.source === 'MANUAL_INPUT'
+                  ? 'Authenticated human-entered measurement · not physical hardware telemetry'
                   : 'Live sensor bus readings for active equipment · Never synthesized or fabricated'}
               </p>
             </div>
@@ -692,7 +700,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     <td className="py-2 text-purple-300">{r.rpm !== undefined ? `${Math.round(r.rpm)}` : 'NULL'}</td>
                     <td className="py-2 text-right">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        r.source === 'REAL_HARDWARE' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-purple-500/20 text-purple-300'
+                        r.source === 'REAL_HARDWARE' ? 'bg-emerald-500/20 text-emerald-300' : r.source === 'MANUAL_INPUT' ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'
                       }`}>
                         {r.source || 'REAL_HARDWARE'}
                       </span>
@@ -796,7 +804,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     onClick={() => onOpenManualModal()}
                     className="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400"
                   >
-                    Manual Real Input
+                    Manual Input
                   </button>
                 </div>
               )}

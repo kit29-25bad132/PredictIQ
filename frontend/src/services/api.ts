@@ -2,13 +2,10 @@
  * Predict IQ - Frontend API Service Layer (PostgreSQL Real-Data Integration)
  * Directly interfaces with FastAPI REST endpoints. Never fabricates or fakes data.
  *
- * Three request paths, strictly separated transports:
+ * Two request paths, strictly separated transports:
  *   - fetchJson:         user requests. Attaches the Supabase access token
  *                        (Authorization: Bearer) except for public endpoints
  *                        (/health, /ready, /auth/*).
- *   - fetchOperatorJson: /api/operator/* and operator-only mutations. Sends
- *                        credentials: 'include' for the HttpOnly operator
- *                        session cookie and NEVER a Supabase token.
  *   - device auth:       X-API-Key is never present in browser code.
  *
  * Token lifecycle: the provider/refresh handlers are injected once by
@@ -214,41 +211,6 @@ class PredictIQApiService {
     }
   }
 
-  /**
-   * Operator-authenticated request: sends credentials cross-origin so the
-   * browser attaches the HttpOnly session cookie. Only used for POST/DELETE
-   * mutations through /api/operator/*.
-   */
-  private async fetchOperatorJson<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-    try {
-      // Operator transport: HttpOnly session cookie only, never a Supabase JWT.
-      const res = await fetch(url, {
-        ...options,
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...options?.headers,
-        },
-      });
-
-      if (!res.ok) {
-        const error = await this.toApiError(res);
-        this.isOnline = true;
-        console.warn(`[Predict IQ API] Operator ${error.status} for ${url}:`, error.message);
-        throw error;
-      }
-
-      this.isOnline = true;
-      return await res.json();
-    } catch (err: any) {
-      if (err instanceof ApiError) throw err;
-      this.isOnline = false;
-      console.warn(`[Predict IQ API] Operator request failed for ${url}:`, err.message || err);
-      throw err;
-    }
-  }
-
   public async listOrganizations(): Promise<OrganizationSummary[]> {
     return this.fetchJson<OrganizationSummary[]>('/organizations');
   }
@@ -270,26 +232,6 @@ class PredictIQApiService {
       method: 'POST',
       ...(savedWorkspaceId ? { headers: { 'X-Organization-Id': savedWorkspaceId } } : {}),
     });
-  }
-
-  // =========================================================================
-  // AUTH OPERATOR SESSION
-  // =========================================================================
-  public async login(password: string): Promise<{ success: boolean; message: string }> {
-    return this.fetchOperatorJson<{ success: boolean; message: string }>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    });
-  }
-
-  public async logout(): Promise<{ success: boolean; message: string }> {
-    return this.fetchOperatorJson<{ success: boolean; message: string }>('/auth/logout', {
-      method: 'POST',
-    });
-  }
-
-  public async checkSession(): Promise<{ authenticated: boolean; message: string }> {
-    return this.fetchOperatorJson<{ authenticated: boolean; message: string }>('/auth/session');
   }
 
   // =========================================================================
@@ -385,7 +327,7 @@ class PredictIQApiService {
   }
 
   public async registerMachine(data: MachineInputPayload): Promise<Machine> {
-    return this.fetchOperatorJson<Machine>('/operator/machines', {
+    return this.fetchJson<Machine>('/machines', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -399,7 +341,7 @@ class PredictIQApiService {
   }
 
   public async registerDevice(data: { device_id: string; machine_id: string; device_type?: string; firmware_version?: string }): Promise<Device> {
-    return this.fetchOperatorJson<Device>('/operator/devices', {
+    return this.fetchJson<Device>('/devices', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -409,17 +351,15 @@ class PredictIQApiService {
   // 4. REAL SENSOR TELEMETRY (POSTGRESQL INGEST & QUERY)
   // =========================================================================
   public async sendSensorData(data: SensorInputPayload): Promise<{ success: boolean; id: number }> {
-    return this.fetchOperatorJson<any>('/operator/sensor-data', {
+    return this.fetchJson<any>('/manual-sensor-data', {
       method: 'POST',
       body: JSON.stringify({
-        device_id: data.device_id,
         machine_id: data.machine_id,
         timestamp: data.timestamp || new Date().toISOString(),
         temperature: Number(data.temperature),
         vibration: Number(data.vibration),
         current: Number(data.current),
         rpm: Number(data.rpm),
-        source: data.source || 'REAL_HARDWARE',
       }),
     });
   }
@@ -461,7 +401,7 @@ class PredictIQApiService {
   }
 
   public async addMaintenance(data: MaintenanceInputPayload): Promise<MaintenanceRecord> {
-    return this.fetchOperatorJson<MaintenanceRecord>('/operator/maintenance', {
+    return this.fetchJson<MaintenanceRecord>('/maintenance', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -484,13 +424,13 @@ class PredictIQApiService {
   }
 
   public async acknowledgeAlert(alertId: number | string): Promise<Alert> {
-    return this.fetchOperatorJson<Alert>(`/operator/alerts/${alertId}/acknowledge`, {
+    return this.fetchJson<Alert>(`/alerts/${alertId}/acknowledge`, {
       method: 'POST',
     });
   }
 
   public async resolveAlert(alertId: number | string): Promise<Alert> {
-    return this.fetchOperatorJson<Alert>(`/operator/alerts/${alertId}/resolve`, {
+    return this.fetchJson<Alert>(`/alerts/${alertId}/resolve`, {
       method: 'POST',
     });
   }
@@ -508,7 +448,7 @@ class PredictIQApiService {
   }
 
   public async addFeedback(data: FeedbackInputPayload): Promise<FeedbackRecord> {
-    return this.fetchOperatorJson<FeedbackRecord>('/operator/feedback', {
+    return this.fetchJson<FeedbackRecord>('/feedback', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -555,16 +495,14 @@ class PredictIQApiService {
   }
 
   public async saveSimulationConfig(machineId: string, config: Partial<MachineSimulationConfig>): Promise<MachineSimulationConfig> {
-    // Mutation: backend requires a valid operator session cookie.
-    return this.fetchOperatorJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config`, {
+    return this.fetchJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config`, {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
   public async resetSimulationConfig(machineId: string): Promise<MachineSimulationConfig> {
-    // Mutation: backend requires a valid operator session cookie.
-    return this.fetchOperatorJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config/reset`, {
+    return this.fetchJson<MachineSimulationConfig>(`/machines/${encodeURIComponent(machineId)}/simulation-config/reset`, {
       method: 'POST',
     });
   }

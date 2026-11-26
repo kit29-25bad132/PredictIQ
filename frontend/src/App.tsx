@@ -554,7 +554,7 @@ function MainAppContent() {
         initialMachineId={modalTargetMachineId}
         onDataSubmitted={() => {
           loadFleetData();
-          showToast('Real measurement saved to PostgreSQL!');
+          showToast('Manual measurement saved to PostgreSQL!');
         }}
       />
 

@@ -18,9 +18,11 @@ import {
 
 interface AlarmStatusBarProps {
   onOpenSettings: () => void;
+  /** Absence of readings must never be represented as nominal health. */
+  hasTelemetry: boolean;
 }
 
-export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }) => {
+export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings, hasTelemetry }) => {
   const {
     thresholds,
     activeCriticalAlarms,
@@ -37,6 +39,7 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
 
   const isAudioBlocked = audioState === 'suspended';
   const hasWarningsOnly = !isAlarmActive && activeWarnings.length > 0;
+  const awaitingTelemetry = !hasTelemetry && !isAlarmActive && !hasWarningsOnly;
 
   return (
     <div
@@ -50,6 +53,8 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
             : 'border-rose-500/80 bg-gradient-to-r from-rose-950/80 via-slate-900 to-rose-950/60 shadow-rose-500/20 animate-pulse-border'
           : hasWarningsOnly
           ? 'border-amber-500/40 bg-gradient-to-r from-amber-950/30 via-slate-900 to-slate-900 shadow-amber-500/5'
+          : awaitingTelemetry
+          ? 'border-slate-700 bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950'
           : 'border-emerald-500/30 bg-gradient-to-r from-emerald-950/20 via-slate-900/90 to-slate-900'
       }`}
     >
@@ -65,6 +70,8 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
                     : 'bg-rose-500/20 text-rose-400 border border-rose-500/50 scale-105 animate-bounce-subtle'
                   : hasWarningsOnly
                   ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                  : awaitingTelemetry
+                  ? 'bg-slate-800 text-slate-400 border border-slate-700'
                   : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
               }`}
             >
@@ -76,6 +83,8 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
                 )
               ) : hasWarningsOnly ? (
                 <AlertTriangle className="h-6 w-6 text-amber-400" />
+              ) : awaitingTelemetry ? (
+                <Radio className="h-6 w-6 text-slate-400" />
               ) : (
                 <ShieldCheck className="h-6 w-6 text-emerald-400" />
               )}
@@ -92,6 +101,8 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
                         : 'bg-rose-600 text-white shadow-lg shadow-rose-600/30 animate-pulse'
                       : hasWarningsOnly
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : awaitingTelemetry
+                      ? 'bg-slate-800 text-slate-300 border border-slate-700'
                       : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                   }`}
                 >
@@ -103,6 +114,8 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
                           : 'bg-white animate-ping'
                         : hasWarningsOnly
                         ? 'bg-amber-400'
+                        : awaitingTelemetry
+                        ? 'bg-slate-400'
                         : 'bg-emerald-400'
                     }`}
                   />
@@ -112,6 +125,8 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
                       : 'CRITICAL ALARM ACTIVE'
                     : hasWarningsOnly
                     ? 'WARNING THRESHOLD EXCEEDED'
+                    : awaitingTelemetry
+                    ? 'WAITING FOR TELEMETRY'
                     : 'NORMAL — ALL SENSORS NOMINAL'}
                 </span>
 
@@ -164,6 +179,10 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings }
                 ) : hasWarningsOnly ? (
                   <span>
                     Telemetry trending high ({activeWarnings.length} warning{activeWarnings.length > 1 ? 's' : ''}). Equipment inspection recommended.
+                  </span>
+                ) : awaitingTelemetry ? (
+                  <span className="text-slate-400">
+                    No verified telemetry is available. Health is unknown until a reading is recorded.
                   </span>
                 ) : (
                   <span className="text-slate-400">

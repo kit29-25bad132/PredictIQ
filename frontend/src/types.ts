@@ -188,7 +188,8 @@ export interface ModelEvaluation {
 }
 
 export interface SensorInputPayload {
-  device_id: string;
+  /** Required for device ingestion; absent for authenticated MANUAL_INPUT. */
+  device_id?: string;
   machine_id: string;
   timestamp?: string;
   temperature: number;

@@ -25,7 +25,6 @@ export const ManualSensorModal: React.FC<ManualSensorModalProps> = ({
   const [vibration, setVibration] = useState<number>(3.8);
   const [current, setCurrent] = useState<number>(8.7);
   const [rpm, setRpm] = useState<number>(1450);
-  const [deviceId, setDeviceId] = useState<string>('ESP32_001');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -39,7 +38,6 @@ export const ManualSensorModal: React.FC<ManualSensorModalProps> = ({
     setSuccessMsg(null);
 
     const payload: SensorInputPayload = {
-      device_id: deviceId || `ESP32_${selectedMachineId}`,
       machine_id: selectedMachineId,
       temperature: Number(temperature),
       vibration: Number(vibration),
@@ -79,7 +77,7 @@ export const ManualSensorModal: React.FC<ManualSensorModalProps> = ({
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-400">
-              Submit physical test readings directly to PostgreSQL via <code className="text-cyan-400 font-mono">POST /api/sensor-data</code>.
+              Store a human-entered measurement in your workspace via <code className="text-cyan-400 font-mono">POST /api/manual-sensor-data</code>. It is never labelled as physical hardware telemetry.
             </p>
           </div>
           <button
@@ -103,7 +101,6 @@ export const ManualSensorModal: React.FC<ManualSensorModalProps> = ({
                 value={selectedMachineId}
                 onChange={(e) => {
                   setSelectedMachineId(e.target.value);
-                  setDeviceId(`ESP32_${e.target.value}`);
                 }}
                 className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
               >
@@ -115,20 +112,6 @@ export const ManualSensorModal: React.FC<ManualSensorModalProps> = ({
               </select>
             </div>
 
-            {/* Device ID */}
-            <div>
-              <label className="text-xs font-semibold text-slate-300">
-                ESP32 Device Node ID
-              </label>
-              <input
-                id="input-device-id"
-                type="text"
-                value={deviceId}
-                onChange={(e) => setDeviceId(e.target.value)}
-                placeholder="ESP32_001"
-                className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
-              />
-            </div>
           </div>
 
           {/* Sensor Inputs */}
@@ -251,7 +234,7 @@ export const ManualSensorModal: React.FC<ManualSensorModalProps> = ({
               className="flex items-center gap-2 rounded-lg bg-cyan-500 px-5 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-50 transition-all shadow-lg shadow-cyan-500/20"
             >
               <Play className="h-3.5 w-3.5 fill-current" />
-              <span>{isLoading ? 'Storing in PostgreSQL...' : 'Store Real Measurement'}</span>
+              <span>{isLoading ? 'Storing in PostgreSQL...' : 'Store Manual Measurement'}</span>
             </button>
           </div>
         </form>

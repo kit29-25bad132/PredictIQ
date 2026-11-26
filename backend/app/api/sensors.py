@@ -23,6 +23,7 @@ from backend.app.db.database import get_db
 from backend.app.db.models import Machine, Device, SensorReading, Alert
 from backend.app.schemas.sensor import (
     SensorDataInput,
+    ManualSensorDataInput,
     SensorDataResponse,
     SensorReadingResponse,
     MachineSensorDataListResponse,
@@ -131,6 +132,61 @@ def ingest_sensor_data(payload: SensorDataInput, db: Session = Depends(get_db)):
         )
 
     return SensorDataResponse(success=True, id=new_reading.id)
+
+
+@router.post(
+    "/manual-sensor-data",
+    response_model=SensorDataResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Store an authenticated user's manual measurement in their organization",
+)
+def ingest_manual_sensor_data(
+    payload: ManualSensorDataInput,
+    ctx: OrganizationContext = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Persist a manual observation without claiming device provenance.
+
+    The machine lookup is organization-scoped.  The source and nullable device
+    fields are server chosen so a caller cannot turn manually typed data into a
+    hardware record.
+    """
+    machine = (
+        db.query(Machine)
+        .filter(
+            Machine.machine_id == payload.machine_id,
+            Machine.organization_id == ctx.organization_id,
+        )
+        .first()
+    )
+    if machine is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine is not available in this workspace.")
+    if machine.is_demo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Manual input is not available for demo machines.")
+
+    try:
+        reading = SensorReading(
+            organization_id=ctx.organization_id,
+            machine_id=machine.machine_id,
+            device_id=None,
+            demo_session_id=None,
+            timestamp=payload.timestamp,
+            temperature=payload.temperature,
+            vibration=payload.vibration,
+            current=payload.current,
+            rpm=payload.rpm,
+            source="MANUAL_INPUT",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(reading)
+        db.flush()
+        evaluate_reading(machine, reading, db)
+        db.commit()
+        db.refresh(reading)
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Manual sensor data could not be stored in PostgreSQL.")
+    return SensorDataResponse(success=True, id=reading.id)
 
 
 # ============================================================================

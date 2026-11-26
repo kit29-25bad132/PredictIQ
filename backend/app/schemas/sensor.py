@@ -71,6 +71,18 @@ class SensorDataInput(SensorChannelFields):
     # Device ingestion contract is unchanged: MANUAL_DEMO is never accepted here.
     source: Literal["WOKWI", "REAL_HARDWARE"] = Field(..., example="REAL_HARDWARE")
 
+
+class ManualSensorDataInput(SensorChannelFields):
+    """Human-entered measurement for an authorized organization workspace.
+
+    This intentionally has no device identity and is persisted as
+    ``MANUAL_INPUT``.  Browser users must never impersonate an ESP32 or label
+    typed values as physical hardware telemetry.
+    """
+
+    machine_id: str = Field(..., example="M001", min_length=1, max_length=50)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 class SensorDataResponse(BaseModel):
     success: bool = Field(default=True, example=True)
     id: int = Field(..., example=1)

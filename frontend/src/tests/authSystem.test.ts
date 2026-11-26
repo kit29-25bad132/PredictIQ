@@ -492,19 +492,16 @@ console.log('\n-- API token attachment --');
     async (recorded) => {
       await api.getMachines();
       await api.getHealth();
-      await api.checkSession();
       await api.getAlerts();
 
       const machines = recorded.find((r) => r.url.endsWith('/api/machines'))!;
       const health = recorded.find((r) => r.url.endsWith('/api/health'))!;
-      const session = recorded.find((r) => r.url.endsWith('/api/auth/session'))!;
 
       assert(
         machines.headers['Authorization'] === `Bearer ${TOKEN}`,
         'Authenticated user API calls carry the Supabase access token.'
       );
       assert(!('Authorization' in health.headers), 'Public health endpoint receives no user token.');
-      assert(!('Authorization' in session.headers), 'Operator session endpoint receives no user token.');
       assert(
         recorded.every((r) => !('X-API-Key' in r.headers)),
         'No device API key is ever sent from browser code.'
@@ -516,9 +513,9 @@ console.log('\n-- API token attachment --');
     () => ({ status: 200, body: { success: true } }),
     async (recorded) => {
       await api.acknowledgeAlert(7);
-      const op = recorded.find((r) => r.url.includes('/api/operator/alerts/7/acknowledge'))!;
-      assert(op.credentials === 'include', 'Operator writes keep credentials: include (HttpOnly cookie).');
-      assert(!('Authorization' in op.headers), 'Operator writes never attach a Supabase JWT.');
+      const alert = recorded.find((r) => r.url.includes('/api/alerts/7/acknowledge'))!;
+      assert(alert.headers['Authorization'] === `Bearer ${TOKEN}`, 'User mutations carry the Supabase access token.');
+      assert(alert.credentials === undefined, 'User mutations do not rely on an operator cookie.');
     }
   );
 
