@@ -20,9 +20,11 @@ interface AlarmStatusBarProps {
   onOpenSettings: () => void;
   /** Absence of readings must never be represented as nominal health. */
   hasTelemetry: boolean;
+  /** Keeps alert language honest when the current reading was entered manually or copied for demo. */
+  telemetrySource?: 'MANUAL_INPUT' | 'MANUAL_DEMO' | 'REAL_HARDWARE' | 'WOKWI' | null;
 }
 
-export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings, hasTelemetry }) => {
+export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings, hasTelemetry, telemetrySource }) => {
   const {
     thresholds,
     activeCriticalAlarms,
@@ -40,6 +42,13 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings, 
   const isAudioBlocked = audioState === 'suspended';
   const hasWarningsOnly = !isAlarmActive && activeWarnings.length > 0;
   const awaitingTelemetry = !hasTelemetry && !isAlarmActive && !hasWarningsOnly;
+  const manualReading = telemetrySource === 'MANUAL_INPUT';
+  const demoReading = telemetrySource === 'MANUAL_DEMO';
+  const telemetryLabel = manualReading
+    ? 'Manual measurement'
+    : demoReading
+    ? 'Historical demo data'
+    : 'Telemetry';
 
   return (
     <div
@@ -171,7 +180,7 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings, 
               <div className="mt-1 text-xs text-slate-300">
                 {isAlarmActive ? (
                   <span>
-                    Hardware telemetry exceeds critical limits!{' '}
+                    {telemetryLabel} exceeds critical limits!{' '}
                     <strong className="text-white">
                       {activeCriticalAlarms.length} critical breach{activeCriticalAlarms.length > 1 ? 'es' : ''} detected.
                     </strong>
@@ -186,7 +195,11 @@ export const AlarmStatusBar: React.FC<AlarmStatusBarProps> = ({ onOpenSettings, 
                   </span>
                 ) : (
                   <span className="text-slate-400">
-                    Continuous real-time temperature &amp; vibration audio surveillance running.
+                    {manualReading
+                      ? 'Health state is based on the latest authenticated manual measurement.'
+                      : demoReading
+                      ? 'Health state is based on the isolated historical demo dataset.'
+                      : 'Continuous temperature and vibration monitoring is running.'}
                   </span>
                 )}
               </div>

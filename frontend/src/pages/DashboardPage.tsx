@@ -32,7 +32,7 @@ import { useAlarm } from '../context/AlarmContext';
 import AlarmStatusBar from '../components/AlarmStatusBar';
 import AlarmSettingsModal from '../components/AlarmSettingsModal';
 import AlarmHistoryPanel from '../components/AlarmHistoryPanel';
-import { useAuth } from '../context/AuthContext';
+import { useOptionalAuth } from '../context/AuthContext';
 
 interface DashboardPageProps {
   machines: Machine[];
@@ -63,11 +63,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   demoMode = false,
 }) => {
   const { thresholds } = useAlarm();
-  const { user, workspace, workspaceLoading } = useAuth();
+  // The public demo intentionally mounts outside AuthProvider.
+  const auth = useOptionalAuth();
+  const user = auth?.user ?? null;
+  const workspace = auth?.workspace ?? null;
+  const workspaceLoading = auth?.workspaceLoading ?? false;
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'WOKWI' | 'REAL_HARDWARE'>('ALL');
+  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'WOKWI' | 'REAL_HARDWARE' | 'MANUAL_INPUT'>('ALL');
   const [dataStatus, setDataStatus] = useState<DataCollectionStatus | null>(null);
   const [aiStatus, setAiStatus] = useState<AIModelStatus | null>(null);
   const [primaryMachineId, setPrimaryMachineId] = useState<string>('');
@@ -136,7 +140,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     const machineSources = [
       m.latest_reading?.source,
       ...(m.devices || []).map((device) => device.source).filter(Boolean),
-    ] as Array<'WOKWI' | 'REAL_HARDWARE'>;
+    ] as Array<'WOKWI' | 'REAL_HARDWARE' | 'MANUAL_INPUT'>;
     const matchesSource =
       sourceFilter === 'ALL' ||
       machineSources.includes(sourceFilter);
@@ -259,7 +263,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       {/* ========================================================================= */}
       {/* 2. REAL-TIME AUDIBLE ALARM SYSTEM STATUS & CONTROL BAR                     */}
       {/* ========================================================================= */}
-      <AlarmStatusBar onOpenSettings={() => setIsAlarmSettingsOpen(true)} hasTelemetry={Boolean(latestReading)} />
+      <AlarmStatusBar
+        onOpenSettings={() => setIsAlarmSettingsOpen(true)}
+        hasTelemetry={Boolean(latestReading)}
+        telemetrySource={latestReading?.source ?? null}
+      />
 
       {/* ========================================================================= */}
       {/* 3. REAL-TIME SENSOR TELEMETRY CARDS (DS18B20, MPU6050, ACS712, RPM)       */}
@@ -755,7 +763,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 ))}
               </div>
               <div className="flex rounded-lg border border-slate-800 bg-slate-950 p-1">
-                {(['ALL', 'WOKWI', 'REAL_HARDWARE'] as const).map((source) => (
+                {(['ALL', 'WOKWI', 'REAL_HARDWARE', 'MANUAL_INPUT'] as const).map((source) => (
                   <button
                     key={source}
                     id={`filter-source-${source.toLowerCase()}`}

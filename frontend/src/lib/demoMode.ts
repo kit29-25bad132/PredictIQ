@@ -19,20 +19,16 @@ export const DEMO_ROOT_PATH = '/demo';
  */
 export const DEMO_TAB_IDS: NavTab[] = [
   'dashboard',
-  '3d-view',
   'machines',
   'machine-details',
-  'monitoring',
   'predictions',
   'maintenance',
   'alerts',
-  'feedback',
   'sensor-data',
-  'settings',
 ];
 
-/** All authenticated navigation remains discoverable in preview mode. */
-export const DEMO_HIDDEN_TABS: NavTab[] = [];
+/** Authenticated-only sections remain unavailable to public demo visitors. */
+export const DEMO_HIDDEN_TABS: NavTab[] = ['3d-view', 'monitoring', 'feedback', 'settings'];
 
 function normalisePath(pathname: string): string {
   const clean = (pathname || '/').split('?')[0].split('#')[0];

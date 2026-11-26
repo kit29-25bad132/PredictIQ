@@ -182,7 +182,11 @@ class PredictIQApiService {
     return new ApiError(typeof message === 'string' ? message : JSON.stringify(message), res.status);
   }
 
-  private async fetchJson<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  private async fetchJson<T>(
+    endpoint: string,
+    options?: RequestInit,
+    invalidateSessionOn401 = true,
+  ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const attachToken = this.shouldAttachUserToken(endpoint);
     try {
@@ -192,7 +196,7 @@ class PredictIQApiService {
         const error = await this.toApiError(res);
         // We reached the server: the backend is online even if it said no.
         this.isOnline = true;
-        if (error.status === 401 && this.unauthorizedHandler) {
+        if (error.status === 401 && invalidateSessionOn401 && this.unauthorizedHandler) {
           // Final 401 after the single refresh retry: session is dead.
           this.unauthorizedHandler();
         }
@@ -312,7 +316,8 @@ class PredictIQApiService {
   }
 
   public async getModelEvaluation(): Promise<ModelEvaluation> {
-    return this.fetchJson<ModelEvaluation>('/model-evaluation');
+    // Expected operator-only denial must not invalidate a valid tenant session.
+    return this.fetchJson<ModelEvaluation>('/model-evaluation', undefined, false);
   }
 
   // =========================================================================

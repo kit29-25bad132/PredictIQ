@@ -603,6 +603,27 @@ console.log('\n-- 401 refresh-and-retry discipline --');
   api.setUnauthorizedHandler(null);
 }
 
+// An operator-only report may deny a normal tenant user; it must not turn that
+// expected denial into a global session invalidation.
+{
+  let unauthorizedCount = 0;
+  api.setAuthTokenProvider(() => 'valid-user-token');
+  api.setRefreshTokenHandler(async () => 'still-valid-token');
+  api.setUnauthorizedHandler(() => { unauthorizedCount += 1; });
+  await withMockedFetch(
+    () => ({ status: 401, body: { detail: 'Operator session required.' } }),
+    async () => {
+      let error: unknown = null;
+      try { await api.getModelEvaluation(); } catch (caught) { error = caught; }
+      assert(error instanceof ApiError && error.status === 401, 'Operator-only evaluation denial remains visible to the caller.');
+      assert(unauthorizedCount === 0, 'Operator-only evaluation denial does not invalidate a valid user session.');
+    },
+  );
+  api.setAuthTokenProvider(null);
+  api.setRefreshTokenHandler(null);
+  api.setUnauthorizedHandler(null);
+}
+
 console.log('\n-- 403 / 404 and no-membership classification --');
 {
   api.setAuthTokenProvider(() => 'user-token');

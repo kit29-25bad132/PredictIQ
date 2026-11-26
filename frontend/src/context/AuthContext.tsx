@@ -244,4 +244,9 @@ export function useAuth(): AuthContextValue {
   return context;
 }
 
+/** Read-only lookup for components shared with the public demo. */
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext);
+}
+
 export default AuthContext;
