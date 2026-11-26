@@ -1,12 +1,7 @@
 import React from 'react';
 import {
-  Radio,
-  RefreshCw,
   Bell,
   Plus,
-  Database,
-  CheckCircle2,
-  AlertCircle,
   AlertOctagon,
   Volume2,
   VolumeX,
@@ -40,13 +35,9 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
-  autoRefresh,
-  onToggleAutoRefresh,
   activeAlertsCount,
   onOpenManualModal,
   onNavigateToAlerts,
-  backendOnline,
-  onRetryBackend,
   userEmail,
   onSignOut,
   demoMode = false,
@@ -102,30 +93,8 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Right: Controls, Status & User Profile Menu */}
-      <div className="flex items-center gap-2 sm:gap-3">
-        {/* PostgreSQL / FastAPI Backend Status Indicator */}
-        <div className="flex items-center">
-          {backendOnline ? (
-            <div className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-400">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <span className="hidden md:inline">PostgreSQL + FastAPI Online</span>
-              <span className="md:hidden">Online</span>
-            </div>
-          ) : (
-            <button
-              onClick={onRetryBackend}
-              title="Click to retry FastAPI backend connection"
-              className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-400 hover:bg-amber-500/20 transition-all"
-            >
-              <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
-              <span>Backend Offline (Retry)</span>
-            </button>
-          )}
-        </div>
+      {/* Right: alarm, input, account and notifications */}
+      <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
 
         {/* Audible Alarm Quick Indicator & Mute Button */}
         {isAlarmActive ? (
@@ -151,21 +120,6 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )
         ) : null}
-
-        {/* Live Auto-Refresh Controller */}
-        <button
-          id="btn-toggle-autorefresh"
-          onClick={() => onToggleAutoRefresh(!autoRefresh)}
-          title={autoRefresh ? 'Live Polling Active (4s)' : 'Polling Paused'}
-          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all ${
-            autoRefresh
-              ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
-              : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${autoRefresh ? 'animate-spin text-cyan-400' : ''}`} />
-          <span className="hidden lg:inline">{autoRefresh ? 'SYNC (4s)' : 'PAUSED'}</span>
-        </button>
 
         {/* Quick Sensor Injection CTA (never rendered for read-only visitors) */}
         {!readOnly && (
