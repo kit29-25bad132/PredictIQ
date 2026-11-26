@@ -10,6 +10,7 @@ without real secrets.
 
 from functools import lru_cache
 from typing import Annotated, List
+from uuid import UUID
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -67,6 +68,11 @@ class Settings(BaseSettings):
     supabase_jwks_cache_seconds: int = 3600
     supabase_jwt_leeway_seconds: int = 30
 
+    # Optional, reversible backend-only demonstration access restriction. When
+    # set, private Supabase-authenticated routes admit only this verified UUID.
+    # It deliberately does not replace JWT verification or organization checks.
+    demo_allowed_user_id: str = ""
+
     # External AI provider (Gemini). Both fail closed: with no key the analyze
     # endpoint returns an explicit configuration error and never fabricates a
     # prediction. The key never enters source code or logs.
@@ -89,6 +95,18 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("demo_allowed_user_id")
+    @classmethod
+    def normalize_demo_allowed_user_id(cls, value: object) -> str:
+        if value is None or value == "":
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("DEMO_ALLOWED_USER_ID must be a Supabase user UUID")
+        try:
+            return str(UUID(value.strip()))
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("DEMO_ALLOWED_USER_ID must be a valid UUID") from exc
 
     # Telemetry bounds (mirrors the active backend validation contract; kept as constants
     # so they can be reused by services/health engine later).

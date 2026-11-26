@@ -56,6 +56,7 @@ interface Harness {
   storage: MemoryStorage;
   selected: Array<string | null>;
   fetchedWith: Array<string | null>;
+  setList(fn: () => Promise<OrganizationSummary[]>): void;
   setUser(userId: string | null): void;
   setFetch(fn: (saved: string | null) => Promise<OrganizationSummary>): void;
 }
@@ -63,6 +64,7 @@ interface Harness {
 function makeHarness(initialUser: string | null, initialFetch?: (saved: string | null) => Promise<OrganizationSummary>): Harness {
   let userId = initialUser;
   let fetchFn = initialFetch ?? (async () => ws('ws-default'));
+  let listFn = async () => [ws('ws-default')];
   const storage = new MemoryStorage();
   const selected: Array<string | null> = [];
   const fetchedWith: Array<string | null> = [];
@@ -74,6 +76,7 @@ function makeHarness(initialUser: string | null, initialFetch?: (saved: string |
       return fetchFn(saved);
     },
     selectWorkspace: (id) => selected.push(id),
+    listWorkspaces: () => listFn(),
     storage,
   });
 
@@ -87,6 +90,9 @@ function makeHarness(initialUser: string | null, initialFetch?: (saved: string |
     },
     setFetch(fn) {
       fetchFn = fn;
+    },
+    setList(fn) {
+      listFn = fn;
     },
   };
 }
@@ -170,7 +176,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   assert(h.initializer.getState().workspace?.id === 'ws-5', 'Retry applies the workspace.');
 }
 
-// 8. Logout clears workspace state and the stored selection.
+// 8. Logout clears active workspace state but keeps the per-user selection.
 {
   const h = makeHarness('u-6', async () => ws('ws-6'));
   await h.initializer.sync();
@@ -179,10 +185,29 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   assert(h.initializer.getState().status === 'idle', 'Logout resets workspace status.');
   assert(h.initializer.getState().workspace === null, 'Logout clears the workspace.');
   assert(h.selected.at(-1) === null, 'Logout clears the tenant selector.');
-  assert(h.storage.getItem(workspaceStorageKey('u-6')) === null, 'Logout removes the stored selection.');
+  assert(h.storage.getItem(workspaceStorageKey('u-6')) === 'ws-6', 'Logout retains the per-user selection for server-verified restoration.');
 }
 
-// 9. Switching authenticated users never reuses the previous workspace.
+// 9. Multiple memberships require a visible choice; the chosen ID is then
+// stored and sent back to the backend for membership revalidation.
+{
+  const h = makeHarness('u-choice', async () => {
+    const error = new Error('Multiple workspaces are available for this account; send X-Organization-Id to choose one.') as Error & { status?: number };
+    error.status = 400;
+    throw error;
+  });
+  h.setList(async () => [ws('ws-personal', 'My Workspace'), ws('ws-legacy', 'Legacy Organization')]);
+  await h.initializer.sync();
+  assert(h.initializer.getState().options.length === 2, 'Multiple memberships expose only active workspace choices.');
+  assert(h.initializer.getState().workspace === null, 'No tenant is selected until the user chooses one.');
+
+  h.setFetch(async (saved) => ws(saved || 'unexpected', saved === 'ws-legacy' ? 'Legacy Organization' : 'Unexpected'));
+  await h.initializer.chooseWorkspace('ws-legacy');
+  assert(h.fetchedWith.at(-1) === 'ws-legacy', 'Chosen workspace is sent as a server-verified selection hint.');
+  assert(h.initializer.getState().workspace?.name === 'Legacy Organization', 'Chosen workspace becomes the active tenant.');
+}
+
+// 10. Switching authenticated users never reuses the previous workspace.
 {
   const h = makeHarness('u-7', async () => ws('ws-7'));
   await h.initializer.sync();
@@ -199,7 +224,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   assert(h.selected.at(-1) === 'ws-8', 'Tenant selector follows the new user.');
 }
 
-// 10. Stale responses from a previous user are ignored.
+// 11. Stale responses from a previous user are ignored.
 {
   const first = deferred<OrganizationSummary>();
   const second = deferred<OrganizationSummary>();
@@ -220,7 +245,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   assert(h.selected.at(-1) === 'ws-10', 'Stale response does not change the tenant selector.');
 }
 
-// 11. Duplicate auth events do not issue duplicate initialization requests.
+// 12. Duplicate auth events do not issue duplicate initialization requests.
 {
   let calls = 0;
   const pending = deferred<OrganizationSummary>();

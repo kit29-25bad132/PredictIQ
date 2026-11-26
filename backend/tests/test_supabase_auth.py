@@ -355,3 +355,23 @@ class TestExistingAuthUnaffected:
         assert client.get("/api/stats").status_code == 401
         # Health remains genuinely public.
         assert client.get("/api/health").status_code == 200
+
+
+class TestOptionalDemonstrationAccessRestriction:
+    def test_rejects_other_verified_user_before_private_route_access(
+        self, jwks, client, signing_key, monkeypatch
+    ):
+        monkeypatch.setattr(get_settings(), "demo_allowed_user_id", SUB)
+
+        allowed = client.get("/api/me", headers=_bearer(_token(signing_key)))
+        assert allowed.status_code == 200
+
+        denied = client.get(
+            "/api/me",
+            headers=_bearer(_token(signing_key, sub="6b9dfe36-35d9-4c37-8ef1-66e22a1d29d2")),
+        )
+        assert denied.status_code == 403
+        assert "demonstration workspace" in denied.json()["detail"]
+
+        # Unauthenticated system liveness remains a real operational probe.
+        assert client.get("/api/health").status_code == 200

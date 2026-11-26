@@ -120,3 +120,26 @@ export const WorkspaceSetupErrorScreen: React.FC<{
     </a>
   </div>
 );
+
+/** Authenticated selection shown only when the backend confirms multiple memberships. */
+export const WorkspaceSelectionScreen: React.FC<{
+  options: Array<{ id: string; name: string; role: string }>;
+  onChoose: (organizationId: string) => void;
+  onSignOut: () => void;
+}> = ({ options, onChoose, onSignOut }) => (
+  <div id="workspace-selection" className="flex min-h-screen flex-col items-center justify-center gap-5 bg-slate-950 px-4 text-slate-100">
+    <div className="max-w-md text-center">
+      <h1 className="text-lg font-bold text-white">Choose your workspace</h1>
+      <p className="mt-2 text-sm text-slate-400">Select the authorized workspace for this session.</p>
+    </div>
+    <div className="w-full max-w-md space-y-2">
+      {options.map((org) => (
+        <button key={org.id} onClick={() => onChoose(org.id)} className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-left hover:border-cyan-500 hover:bg-slate-800">
+          <span className="block font-semibold text-white">{org.name}</span>
+          <span className="block text-xs text-slate-400">{org.role}</span>
+        </button>
+      ))}
+    </div>
+    <button onClick={onSignOut} className="text-xs font-semibold text-slate-400 hover:text-slate-200">Sign out</button>
+  </div>
+);

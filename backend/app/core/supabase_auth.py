@@ -291,7 +291,7 @@ def require_supabase_user(request: Request) -> AuthenticatedUser:
         )
 
     try:
-        return verify_access_token(token)
+        user = verify_access_token(token)
     except SupabaseAuthUnavailable as exc:
         # Generic message: never surface key material or upstream detail.
         logger.error("Supabase token verification unavailable: %s", exc)
@@ -306,6 +306,18 @@ def require_supabase_user(request: Request) -> AuthenticatedUser:
             detail="Invalid or expired authentication credentials.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    # Demonstration lockdown is opt-in and applied only after the JWT has been
+    # fully verified. It is a coarse access gate, not an identity substitute:
+    # organization membership and role authorization still run on every
+    # private request. Public routes do not depend on this function.
+    allowed_user_id = settings.demo_allowed_user_id
+    if allowed_user_id and user.user_id != allowed_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is not authorized for the demonstration workspace.",
+        )
+    return user
 
 
 # Shared dependency factory mirroring the existing auth module conventions.

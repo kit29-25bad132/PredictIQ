@@ -42,7 +42,9 @@ interface AuthContextValue {
   workspaceStatus: WorkspaceState['status'];
   workspaceLoading: boolean;
   workspaceError: string | null;
+  workspaceOptions: OrganizationSummary[];
   retryWorkspace: () => void;
+  chooseWorkspace: (organizationId: string) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -78,6 +80,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       getUserId: () => managerRef.current?.getUser()?.id ?? null,
       fetchWorkspace: (savedWorkspaceId) => api.initializeWorkspace(savedWorkspaceId),
       selectWorkspace: (id) => api.setOrganizationId(id),
+      listWorkspaces: () => api.listOrganizations(),
       storage: typeof window !== 'undefined' ? window.localStorage : memoryStorage,
     });
   }
@@ -185,6 +188,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void initializer.retry();
   }, [initializer]);
 
+  const chooseWorkspace = useCallback((organizationId: string) => {
+    void initializer.chooseWorkspace(organizationId);
+  }, [initializer]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -203,7 +210,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       workspaceStatus: workspaceState.status,
       workspaceLoading: workspaceState.status === 'loading',
       workspaceError: workspaceState.error,
+      workspaceOptions: workspaceState.options,
       retryWorkspace,
+      chooseWorkspace,
     }),
     [
       status,
@@ -220,6 +229,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       initializeAuth,
       workspaceState,
       retryWorkspace,
+      chooseWorkspace,
     ]
   );
 

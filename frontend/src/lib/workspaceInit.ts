@@ -20,6 +20,7 @@ export type WorkspaceStatus = 'idle' | 'loading' | 'ready' | 'error';
 export interface WorkspaceState {
   status: WorkspaceStatus;
   workspace: OrganizationSummary | null;
+  options: OrganizationSummary[];
   error: string | null;
 }
 
@@ -43,10 +44,12 @@ export interface WorkspaceInitializerDeps {
   fetchWorkspace(savedWorkspaceId: string | null): Promise<OrganizationSummary>;
   /** Sets/clears the tenant selector used by subsequent API requests. */
   selectWorkspace(id: string | null): void;
+  /** Lists active memberships after the backend requests an explicit choice. */
+  listWorkspaces?: () => Promise<OrganizationSummary[]>;
   storage: StorageLike;
 }
 
-const IDLE_STATE: WorkspaceState = { status: 'idle', workspace: null, error: null };
+const IDLE_STATE: WorkspaceState = { status: 'idle', workspace: null, options: [], error: null };
 
 /** Neutral, retryable copy: no organization/tenant/provisioning internals. */
 export const WORKSPACE_ERROR_MESSAGE =
@@ -98,13 +101,14 @@ export class WorkspaceInitializer {
     return this.run(userId);
   }
 
-  /** Forget everything about the current workspace (logout / dead session). */
+  /** Clear active state (logout / dead session), but retain the per-user choice.
+   * The saved ID is never authorization: the backend revalidates it at every
+   * restored session before it becomes the organization request header. */
   public reset(): void {
     const userId = this.ownerId ?? this.inFlight?.userId ?? null;
     this.generation += 1;
     this.inFlight = null;
     this.ownerId = null;
-    if (userId) this.deps.storage.removeItem(workspaceStorageKey(userId));
     this.deps.selectWorkspace(null);
     this.setState({ ...IDLE_STATE });
   }
@@ -118,7 +122,7 @@ export class WorkspaceInitializer {
       this.ownerId = null;
       this.deps.selectWorkspace(null);
     }
-    this.setState({ status: 'loading', workspace: null, error: null });
+    this.setState({ status: 'loading', workspace: null, options: [], error: null });
 
     try {
       const saved = this.deps.storage.getItem(workspaceStorageKey(userId));
@@ -130,16 +134,42 @@ export class WorkspaceInitializer {
       this.ownerId = userId;
       this.deps.selectWorkspace(workspace.id);
       this.deps.storage.setItem(workspaceStorageKey(userId), workspace.id);
-      this.setState({ status: 'ready', workspace, error: null });
-    } catch {
+      this.setState({ status: 'ready', workspace, options: [], error: null });
+    } catch (error) {
       // Stale failures (previous user / superseded request) must not surface.
       if (!this.isCurrent(userId, generation)) return;
+      const status = (error as { status?: unknown } | null)?.status;
+      const message = (error as { message?: unknown } | null)?.message;
+      const needsChoice = status === 400 && typeof message === 'string' && message.includes('Multiple workspaces');
+      if (needsChoice && this.deps.listWorkspaces) {
+        try {
+          const options = (await this.deps.listWorkspaces()).filter((org) => org.status === 'active');
+          if (!this.isCurrent(userId, generation)) return;
+          this.ownerId = null;
+          this.deps.selectWorkspace(null);
+          this.setState({ status: 'error', workspace: null, options, error: 'Select a workspace to continue.' });
+          return;
+        } catch {
+          // Fall through to the neutral retryable error below.
+        }
+      }
       this.ownerId = null;
       this.deps.selectWorkspace(null);
-      this.setState({ status: 'error', workspace: null, error: WORKSPACE_ERROR_MESSAGE });
+      this.setState({ status: 'error', workspace: null, options: [], error: WORKSPACE_ERROR_MESSAGE });
     } finally {
       if (this.inFlight?.generation === generation) this.inFlight = null;
     }
+  }
+
+  /** Persist a requested workspace, then re-run the normal server-verified flow. */
+  public chooseWorkspace(organizationId: string): Promise<void> {
+    const userId = this.deps.getUserId();
+    if (!userId) {
+      this.reset();
+      return Promise.resolve();
+    }
+    this.deps.storage.setItem(workspaceStorageKey(userId), organizationId);
+    return this.run(userId);
   }
 
   private isCurrent(userId: string, generation: number): boolean {

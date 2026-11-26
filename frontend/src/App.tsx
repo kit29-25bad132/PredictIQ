@@ -21,7 +21,7 @@ import { AlarmProvider, useAlarm } from './context/AlarmContext';
 import { SimulationProvider } from './context/SimulationContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import RequireAuth from './components/auth/RequireAuth';
-import { WorkspaceInitializingScreen, WorkspaceSetupErrorScreen } from './components/auth/AuthScreens';
+import { WorkspaceInitializingScreen, WorkspaceSelectionScreen, WorkspaceSetupErrorScreen } from './components/auth/AuthScreens';
 import SignInPage from './pages/auth/SignInPage';
 import SignUpPage from './pages/auth/SignUpPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
@@ -59,7 +59,7 @@ const WORKBENCH_TABS: string[] = [
 
 function MainAppContent() {
   const { evaluateFleetTelemetry, isAlarmActive, isAudioMuted, muteAlarm } = useAlarm();
-  const { user, signOut, workspace, workspaceLoading, workspaceError, retryWorkspace } = useAuth();
+  const { user, signOut, workspace, workspaceLoading, workspaceError, workspaceOptions, retryWorkspace, chooseWorkspace } = useAuth();
 
   // Route State: 'home' | 'workbench'
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('home');
@@ -366,7 +366,9 @@ function MainAppContent() {
   // Route 2: Private Industrial Workbench (authentication required)
   return (
     <RequireAuth onBlocked={handleAuthBlocked}>
-    {orgAccessPending || workspaceError ? (
+    {workspaceOptions.length > 0 ? (
+      <WorkspaceSelectionScreen options={workspaceOptions} onChoose={chooseWorkspace} onSignOut={handleSignOut} />
+    ) : orgAccessPending || workspaceError ? (
       <WorkspaceSetupErrorScreen
         message={workspaceError || 'Your workspace access could not be restored.'}
         onRetry={handleRetryWorkspace}
