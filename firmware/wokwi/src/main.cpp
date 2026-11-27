@@ -3,6 +3,7 @@
 #include "api_client.h"
 #include "config.h"
 #include "sensors.h"
+#include "simulation.h"
 #include "wifi_manager.h"
 
 void setup() {
@@ -28,6 +29,9 @@ void setup() {
 #endif
 
     initSensors();
+    initWokwiSimulation();
+    Serial.print("[SIMULATION] Mode: ");
+    Serial.println(dynamicSimulationEnabled() ? "AUTOMATIC_DYNAMIC" : "STATIC_COMPONENTS");
     initWiFi();
 
     sendHeartbeat();
@@ -49,10 +53,18 @@ void loop() {
     }
     lastSample = millis();
 
-    const SensorReading temperature = readTemperature();
-    const SensorReading vibration = readVibration();
-    const SensorReading current = readCurrent();
-    const SensorReading rpm = readRPM();
+    SensorReading temperature;
+    SensorReading vibration;
+    SensorReading current;
+    SensorReading rpm;
+    if (dynamicSimulationEnabled()) {
+        readWokwiSimulation(temperature, vibration, current, rpm);
+    } else {
+        temperature = readTemperature();
+        vibration = readVibration();
+        current = readCurrent();
+        rpm = readRPM();
+    }
 
     Serial.println("\nPredict IQ IoT Node");
     Serial.println("-------------------");
@@ -60,6 +72,8 @@ void loop() {
     Serial.println(DEVICE_ID);
     Serial.print("Machine: ");
     Serial.println(MACHINE_ID);
+    Serial.print("Operating state: ");
+    Serial.println(dynamicSimulationEnabled() ? wokwiOperatingState() : "STATIC_COMPONENTS");
     Serial.println(isWiFiConnected() ? "WiFi: CONNECTED" : "WiFi: DISCONNECTED");
     Serial.print("Temperature: ");
     Serial.println(temperature.valid ? String(temperature.value, 2) : "ERROR");

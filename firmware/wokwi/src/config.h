@@ -11,7 +11,7 @@
 // backend running on the developer machine. host.wokwi.internal resolves to the
 // host OS from within the Wokwi simulation. If you are using the gateway path
 // instead, override this to the gateway host/port and set GATEWAY_TOKEN.
-#define API_BASE_URL "http://host.wokwi.internal:8000"
+#define API_BASE_URL "http://host.wokwi.internal:9000"
 //
 // TLS trust anchor for API_BASE_URL (PUBLIC certificate - not a secret):
 // GlobalSign Root CA (RSA-2048, self-signed, 1998-2028), the trust anchor of
@@ -95,6 +95,16 @@
 #define WIFI_RECONNECT_INTERVAL_MS 10000UL
 #define HTTP_TIMEOUT_MS 8000
 #define SERIAL_BAUD 115200
+
+// Wokwi-only operating-condition generator. This source tree is not used by
+// the physical ESP32 firmware. Set STATIC_COMPONENTS to demonstrate the actual
+// Wokwi components; AUTOMATIC_DYNAMIC is the repeatable DRDO demonstration
+// mode. Rebuild after changing the mode.
+#define WOKWI_SIMULATION_STATIC_COMPONENTS 0
+#define WOKWI_SIMULATION_AUTOMATIC_DYNAMIC 1
+#define WOKWI_SIMULATION_MODE WOKWI_SIMULATION_AUTOMATIC_DYNAMIC
+#define WOKWI_SIMULATION_SEED 0x50495131UL
+#define WOKWI_STATE_INTERVAL_MS 30000UL
 
 // TLS discipline (security plan §9.6): certificate verification is DISABLED only
 // under the explicit test build flag below, for tunnels whose certs cannot be

@@ -6,7 +6,9 @@ This directory is a standalone Wokwi simulation for the Predict IQ telemetry pat
 Wokwi sensors -> ESP32-S3 -> Wi-Fi -> FastAPI /api/sensor-data -> PostgreSQL
 ```
 
-The simulation uses sensor components and their measured outputs only. It does not generate random values, seed the database, contain database credentials, or implement predictions.
+The simulation supports two clearly separated Wokwi-only modes: static component
+readings and a deterministic dynamic industrial scenario for demonstrations. It
+never contains database credentials, production device keys, or predictions.
 
 ## Board and deployment
 
@@ -38,13 +40,79 @@ Change `PULSES_PER_REVOLUTION` in `src/config.h` when the simulated or physical 
 
 ## FastAPI URL and networking
 
-Wokwi cannot use `localhost` to reach a FastAPI process on the development machine. Start FastAPI on an accessible interface and expose it through a tunnel or reachable deployment, then set this value in `src/config.h`:
+Wokwi cannot use `localhost` to reach a FastAPI process on the development machine.
+The verified local transport is the private Wokwi IoT Gateway and the special
+host name in `src/config.h`:
 
 ```cpp
-#define API_BASE_URL "https://your-public-fastapi-tunnel.example.com"
+#define API_BASE_URL "http://host.wokwi.internal:9000"
 ```
 
-The firmware appends `/api/sensor-data`. Do not put database credentials or API keys in this project. FastAPI is the only database client.
+The firmware appends `/api/devices/heartbeat` and `/api/sensor-data`. The
+gateway accepts its bearer token and forwards to Render using its private device
+key; the Render key never enters firmware or Wokwi.
+
+## Verified production contract
+
+- Organization: `Legacy Organization`
+- Machine: `TEST-001`
+- Device: `ESP32_001`
+- Provenance: `WOKWI`
+- Telemetry interval: 5 seconds
+- Heartbeat interval: 30 seconds
+- Machine limits used by the production health engine: 75 C, 4.5 mm/s vibration,
+  10 A rated current, and 1450 RPM.
+
+## Dynamic Wokwi demonstration mode
+
+`WOKWI_SIMULATION_MODE` in `src/config.h` selects the behavior:
+
+- `WOKWI_SIMULATION_STATIC_COMPONENTS` keeps the DS18B20, MPU6050,
+  potentiometer, and pulse-generator acquisition path.
+- `WOKWI_SIMULATION_AUTOMATIC_DYNAMIC` is the default repeatable demonstration
+  mode. It is implemented only in `src/simulation.cpp`, never in the physical
+  ESP32 firmware.
+
+The dynamic mode emits bounded, deterministic, correlated values and changes
+state every 30 seconds:
+
+1. Normal operation
+2. Increasing load
+3. Mechanical imbalance
+4. Overload
+5. Critical stress
+6. Recovery
+
+Current and RPM share a load effect, imbalance raises vibration, and temperature
+has gradual thermal inertia. The fixed seed is for repeatable demonstrations,
+not physical-failure ground truth or training data.
+
+## Repeatable startup procedure
+
+1. Start the canonical local gateway from `deploy/gateway` with its existing,
+   untracked `.env`. It must listen on port 9000 and return `200` from
+   `http://127.0.0.1:9000/health`.
+2. Start `wokwigw` and confirm it listens on port 9011.
+3. Build from this directory with the gateway token supplied only through the
+   process environment. Do not put the token in `platformio.ini`, source files,
+   Wokwi settings, or Git:
+
+   ```powershell
+   $env:GATEWAY_TOKEN = '<existing private gateway token>'
+   pio run -e esp32-s3-devkitc-1
+   Remove-Item Env:GATEWAY_TOKEN
+   ```
+
+4. Confirm `wokwi.toml` points at the newly generated `.pio/build/.../firmware.bin`
+   and `.elf` artifacts.
+5. In VS Code, open this folder and run **Wokwi: Start Simulator** from the
+   Command Palette. Keep the Simulator tab visible. Do not use `wokwi-cli` for
+   host forwarding: the VS Code simulator attaches to the local private gateway.
+6. Confirm serial output shows gateway authentication configured, NTP UTC time,
+   `Heartbeat HTTP Status: 200`, and telemetry `HTTP Status: 201`.
+7. For a bounded demonstration, stop the simulator after three minutes and
+   verify WOKWI readings in Legacy Organization / TEST-001 before leaving it
+   running continuously.
 
 Wokwi Wi-Fi is configured as:
 
